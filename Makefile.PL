@@ -48,7 +48,7 @@ find(sub {
 
 WriteMakefile(
               NAME      => 'RPC::XML',
-              VERSION   => '0.35',
+              VERSION   => '0.36',
               EXE_FILES => \@scripts,
               PM        => \%PM_FILES,
               PREREQ_PM => { XML::Parser => 2.25,
