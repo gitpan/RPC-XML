@@ -9,7 +9,7 @@
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.21 2001/12/12 06:56:06 rjray Exp $
+#   $Id: Server.pm,v 1.24 2002/01/28 00:26:47 rjray Exp $
 #
 #   Description:    This class implements an RPC::XML server, using the core
 #                   XML::RPC transaction code. The server may be created with
@@ -50,6 +50,7 @@
 #                   RPC::XML
 #                   RPC::XML::Parser
 #                   RPC::XML::Method
+#                   RPC::XML::Procedure
 #
 #   Global Consts:  $VERSION
 #                   $INSTALL_DIR
@@ -71,15 +72,16 @@ BEGIN {
     @XPL_PATH = ($INSTALL_DIR, File::Spec->curdir);
 }
 
+require HTTP::Daemon;
 require HTTP::Response;
 require HTTP::Status;
 require URI;
 
 require RPC::XML;
 require RPC::XML::Parser;
-require RPC::XML::Method;
+require RPC::XML::Procedure;
 
-$VERSION = do { my @r=(q$Revision: 1.21 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.24 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 1;
 
@@ -122,8 +124,6 @@ sub new
     }
     else
     {
-        require HTTP::Daemon;
-
         $host = $args{host}   || '';
         $port = $args{port}   || '';
         $queue = $args{queue} || 5;
@@ -157,7 +157,6 @@ sub new
     $self->{__path}            = $args{path} || '';
     $self->{__started}         = 0;
     $self->{__method_table}    = {};
-    $self->{__method_class}    = $args{method_class} || 'RPC::XML::Method';
     $self->{__requests}        = 0;
     $self->{__auto_methods}    = $args{auto_methods} || 0;
     $self->{__auto_updates}    = $args{auto_updates} || 0;
@@ -257,7 +256,6 @@ sub add_method
     my $meth = shift;
 
     my ($name, $val);
-    my $class = $self->{__method_class};
 
     my $me = ref($self) . '::add_method';
 
@@ -275,12 +273,13 @@ sub add_method
     }
     elsif (ref($meth) eq 'HASH')
     {
+        my $class = 'RPC::XML::' . ucfirst ($meth->{type} || 'method');
         $meth = $class->new($meth);
     }
-    elsif (! UNIVERSAL::isa($meth, $class))
+    elsif (! UNIVERSAL::isa($meth, 'RPC::XML::Procedure'))
     {
-        return "$me: Method argument must be a $class object, a hash " .
-            'reference or a file name';
+        return "$me: Method argument must be a file name, a hash " .
+            'reference or an object derived from RPC::XML::Procedure';
     }
 
     # Do some sanity-checks
@@ -407,15 +406,6 @@ off. As with the auto-loading of methods, this represents a security risk, and
 should only be permitted by a server administrator with fully informed
 acknowledgement and consent.
 
-=item B<method_class>
-
-By default, the server class uses the B<RPC::XML::Method> class to manage the
-manipulation and tracking of the methods the server objects make available. If
-the developer chooses to sub-class this method implementation (or even provide
-a completely new one), the name of the class must be passed in via this
-parameter. It will be used in all the internal creation/manipulation routines
-within the server class.
-
 =back
 
 Any other keys in the options hash not explicitly used by the constructor are
@@ -466,11 +456,14 @@ and thus is represented as an integer number of seconds since the system
 epoch. Generally, it is suitable for passing to either B<localtime> or to the
 C<time2iso8601> routine exported by the B<RPC::XML> package.
 
-=item add_method(FILE | HASHREF)
+=item add_method(FILE | HASHREF | OBJECT)
 
-This adds a new published method to the server object that invokes it. The
-new method may be specified in one of two ways: as a filename or as a hash
-reference.
+=item add_proc(FILE | HASHREF | OBJECT)
+
+This adds a new published method or procedure to the server object that
+invokes it. The new method may be specified in one of three ways: as a
+filename, a hash reference or an existing object (generally of either
+B<RPC::XML::Procedure> or B<RPC::XML::Method> classes).
 
 If passed as a hash reference, the following keys are expected:
 
@@ -514,32 +507,50 @@ has such an externally-visible method).
 =back
 
 If a file is passed, then it is expected to be in the XML-based format,
-described in the B<RPC::XML::Method> manual (see L<RPC::XML::Method>). If the
-name passed is not an absolute pathname, then the file will be searched for
-in any directories specified when the object was instantiated, then in the
+described in the B<RPC::XML::Procedure> manual (see L<RPC::XML::Procedure>).
+If the name passed is not an absolute pathname, then the file will be searched
+for in any directories specified when the object was instantiated, then in the
 directory into which this module was installed, and finally in the current
 working directory. If the operation fails, the return value will be a
 non-reference, an error message. Otherwise, the return value is the object
 reference.
 
-For more on the creation and manipulation of methods as objects, see
-L<RPC::XML::Method>.
+The B<add_method> and B<add_proc> calls are essentialy identical unless called
+with hash references. Both files and objects contain the information that
+defines the type (method vs. procedure) of the funtionality to be added to the
+server. If B<add_method> is called with a file that describes a procedure, the
+resulting addition to the server object will be a B<RPC::XML::Procedure>
+object, not a method object.
+
+For more on the creation and manipulation of procedures and methods as
+objects, see L<RPC::XML::Procedure>.
 
 =item delete_method(NAME)
 
-Delete the named method from the calling object. Removes the entry from the
-internal table that the object maintains. If the method is shared across more
-than one server object (see L</share_methods>), then the underlying object for
-it will only be destroyed when the last server object releases it. On error
-(such as no method by that name known), an error string is returned.
+=item delete_proc(NAME)
+
+Delete the named method or procedure from the calling object. Removes the
+entry from the internal table that the object maintains. If the method is
+shared across more than one server object (see L</share_methods>), then the
+underlying object for it will only be destroyed when the last server object
+releases it. On error (such as no method by that name known), an error string
+is returned.
+
+The B<delete_proc> call is identical, supplied for the sake of symmetry. Both
+calls return the matched object regardless of its underlying type.
 
 =item list_methods
 
-This returns a list of the names of methods the server current has published.
-Note that the returned values are not the method objects, but rather the names
-by which they are externally known. The "hidden" status of a method is not
-consulted when this list is created; all methods known are listed. The list is
-not sorted in any specific order.
+=item list_procs
+
+This returns a list of the names of methods and procedures the server current
+has published.  Note that the returned values are not the method objects, but
+rather the names by which they are externally known. The "hidden" status of a
+method is not consulted when this list is created; all methods and procedures
+known are listed. The list is not sorted in any specific order.
+
+The <list_procs> call is provided for symmetry. Both calls list all published
+routines on the calling server object, regardless of underlying type.
 
 =item xpl_path([LISTREF])
 
@@ -553,14 +564,19 @@ installation directory or the current working directory are searched.
 
 =item get_method(NAME)
 
-Returns a reference to an object of the class B<RPC::XML::Method>, which is
-the current binding for the published method NAME. If there is no such method
-known to the server, then C<undef> is returned. The object is implemented as a
-hash, and has the same key and value pairs as for C<add_method>, above. Thus,
-the reference returned is suitable for passing back to C<add_method>. This
-facilitates temporary changes in what a published name maps to. Note that this
-is a referent to the object as stored on the server object itself, and thus
-changes to it could affect the behavior of the server.
+=item get_proc(NAME)
+
+Returns a reference to an object of the class B<RPC::XML::Method> or
+B<RPC::XML::Procedure>, which is the current binding for the published method
+NAME. If there is no such method known to the server, then C<undef> is
+returned. The object is implemented as a hash, and has the same key and value
+pairs as for C<add_method>, above. Thus, the reference returned is suitable
+for passing back to C<add_method>. This facilitates temporary changes in what
+a published name maps to. Note that this is a referent to the object as stored
+on the server object itself, and thus changes to it could affect the behavior
+of the server.
+
+The B<get_proc> interface is provided for symmetry.
 
 =item server_loop(HASH)
 
@@ -635,48 +651,64 @@ B<Apache::RPC::Server> module uses this to prevent the loading of the default
 C<system.status> method while still loading all the rest of the defaults. (It
 then provides a more Apache-centric status method.)
 
-=item add_methods_in_dir(DIR, [DETAILS])
+Note that there is no symmetric call in this case. The provided API is
+implemented as methods, and thus only this interface is provided.
+
+=item add_methods_in_dir(DIR [, DETAILS])
+
+=item add_procs_in_dir(DIR [, DETAILS])
 
 This is exactly like B<add_default_methods> above, save that the caller
-specifies which directory to scan for C<*.xpl> files. In fact, the defaults
-routine simply calls this routine with the installation directory as the
-first argument. The definition of the additional arguments is the same as
-above.
+specifies which directory to scan for C<*.xpl> files. In fact, the
+B<add_default_methods> routine simply calls this routine with the installation
+directory as the first argument. The definition of the additional arguments is
+the same as above.
+
+B<add_procs_in_dir> is provided for symmetry.
 
 =item share_methods(SERVER, NAMES)
 
-The calling server object shares the methods listed in B<NAMES> with the
-source-server passed as the first object. The source must derive from this
-package in order for this operation to be permitted. At least one method must
-be specified. All are specified by name. Both objects will reference the same
-exact B<RPC::XML::Method> (or derivative thereof) object in this case, meaning
-that call-statistics and the like will reflect the combined data. If one or
-more of the passed names are not present on the source server, and error
-message is returned and none are copied to the calling object.
+=item share_procs(SERVER, NAMES)
+
+The calling server object shares the methods and/or procedures listed in
+B<NAMES> with the source-server passed as the first object. The source must
+derive from this package in order for this operation to be permitted. At least
+one method must be specified, and all are specified by name (not by object
+refernce). Both objects will reference the same exact B<RPC::XML::Procedure>
+(or B<Method>, or derivative thereof) object in this case, meaning that
+call-statistics and the like will reflect the combined data. If one or more of
+the passed names are not present on the source server, an error message is
+returned and none are copied to the calling object.
 
 Alternately, one or more of the name parameters passed to this call may be
 regular-expression objects (the result of the B<qr> operator). Any of these
 detected are applied against the list of all available methods known to the
 source server. All matching ones are inserted into the list (the list is pared
 for redundancies in any case). This allows for easier addition of whole
-classes such as those in the C<system> name space (via B<C<qr/^system\./>>),
-for example. There is no substring matching provided. Names listed in the parameters to this routine must be either complete strings or regular expressions.
+classes such as those in the C<system.*> name space (via B<C<qr/^system\./>>),
+for example. There is no substring matching provided. Names listed in the
+parameters to this routine must be either complete strings or regular
+expressions.
+
+The B<share_procs> interface is provided for symmetry.
 
 =item copy_methods(SERVER, NAMES)
 
+=item copy_procs(SERVER, NAMES)
+
 This behaves like the method B<share_methods> above, with the exception that
-the calling object is given a clone of each method, rather than referencing the
-same exact method as the source server. The code reference part of the method
-is shared between the two, but all other data are copied (including a fresh
-copy of any list references used) into a completely new B<RPC::XML::Method> (or
-derivative) object, using the C<clone()> method from that class. Thus, while
-the calling object has the same methods available, and is re-using existing
-code in the Perl runtime, the method objects (and hence the statistics and
-such) are kept separate. As with the above, an error is flagged if one or more
-are not found.
+the calling object is given a clone of each method, rather than referencing
+the same exact method as the source server. The code reference part of the
+method is shared between the two, but all other data are copied (including a
+fresh copy of any list references used) into a completely new
+B<RPC::XML::Procedure> (or derivative) object, using the C<clone()> method
+from that class. Thus, while the calling object has the same methods
+available, and is re-using existing code in the Perl runtime, the method
+objects (and hence the statistics and such) are kept separate. As with the
+above, an error is flagged if one or more are not found.
 
 This routine also accepts regular-expression objects with the same behavior
-and limitations.
+and limitations. Again, B<copy_procs> is simply provided for symmetry.
 
 =back
 
@@ -695,17 +727,20 @@ several ways provided. Methods may be added directly within code by using
 C<add_method> as described above, with full data provided for the code
 reference, signature list, etc. The C<add_method> technique can also be used
 with a file that conforms to a specific XML-based format (detailed in the
-manual page for the B<RPC::XML::Method> class, see L<RPC::XML::Method>). Entire
-directories of files may be added using C<add_methods_in_dir>, which merely
-reads the given directory for files that appear to be method definitions.
+manual page for the B<RPC::XML::Procedure> class, see L<RPC::XML::Procedure>).
+Entire directories of files may be added using C<add_methods_in_dir>, which
+merely reads the given directory for files that appear to be method
+definitions.
 
 =head2 How Methods Are Called
 
 When a routine is called via the server dispatcher, it is called with the
-arguments that the client request passed, plus one. The extra argument is the
-first one passed, a reference to a B<RPC::XML::Server> object (or a subclass
-thereof). This is derived from a hash reference, and will include two
-special keys:
+arguments that the client request passed. Depending on whether the routine is
+considered a "procedure" or a "method", there may be an extra argument at the
+head of the list. The extra argument is present when the routine being
+dispatched is part of a B<RPC::XML::Method> object. The extra argument is a
+reference to a B<RPC::XML::Server> object (or a subclass thereof). This is
+derived from a hash reference, and will include two special keys:
 
 =over 4
 
@@ -726,14 +761,20 @@ refer to the arguments themselves.
 
 =back
 
-Note that by passing the server object reference first, the methods themselves
-are essentially expected to behave as actual methods of the server class, as
-opposed to ordinary functions. Of course, they can also discard the initial
-argument completely.
+Note that by passing the server object reference first, method-classed
+routines are essentially expected to behave as actual methods of the server
+class, as opposed to ordinary functions. Of course, they can also discard the
+initial argument completely.
 
-The methods should not make (excessive) use of global variables. Likewise,
-methods should not change their package space within the definition. Bad
-Things Could Happen.
+The routines should not make (excessive) use of global variables, for obvious
+reasons. When the routines are loaded from XPL files, the code is created as a
+closure that forces execution in the B<RPC::XML::Procedure> package. If the
+code element of a procedure/method is passed in as a direct code reference by
+one of the other syntaxes allowed by the constructor, the package may well be
+different. Thus, routines should strive to be as localized as possible,
+independant of specific namespaces. If a group of routines are expected to
+work in close concert, each should explicitly set the namespace with a
+C<package> declaration as the first statement within the routines themselves.
 
 =head2 The Default Methods Provided
 
@@ -848,9 +889,34 @@ __END__
 
 ###############################################################################
 #
+#   Sub Name:       add_proc
+#
+#   Description:    This filters through to add_method, but unlike the other
+#                   front-ends defined later, this one may have to alter the
+#                   data in one type of calling-convention.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object reference
+#                   $meth     in      scalar    Procedure to add
+#
+#   Returns:        threads through to add_method
+#
+###############################################################################
+sub add_proc
+{
+    my ($self, $meth) = @_;
+
+    # Anything else but a hash-reference goes through unaltered
+    $meth->{type} = 'procedure' if (ref($meth) eq 'HASH');
+
+    $self->add_method($meth);
+}
+
+###############################################################################
+#
 #   Sub Name:       method_from_file
 #
-#   Description:    Create a RPC::XML::Method (or derivative) object from the
+#   Description:    Create a RPC::XML::Procedure (or ::Method) object from the
 #                   passed-in file name, using the object's search path if the
 #                   name is not already absolute.
 #
@@ -867,8 +933,6 @@ sub method_from_file
     my $self = shift;
     my $file = shift;
 
-    my $class = $self->{__method_class};
-
     unless (File::Spec->file_name_is_absolute($file))
     {
         my ($path, @path);
@@ -884,8 +948,11 @@ sub method_from_file
     $file = File::Spec->rel2abs($file)
         unless (File::Spec->file_name_is_absolute($file));
 
-    $class->new($file);
+    RPC::XML::Procedure::new(undef, $file);
 }
+
+# Same as above, but for name-symmetry
+sub proc_from_file { shift->method_from_file(@_) }
 
 ###############################################################################
 #
@@ -913,6 +980,9 @@ sub get_method
 
     $self->{__method_table}->{$name};
 }
+
+# Same as above, but for name-symmetry
+sub get_proc { shift->get_method(@_) }
 
 ###############################################################################
 #
@@ -976,6 +1046,9 @@ sub server_loop
         # Don't do this next part if they've already given a port, or are
         # pointing to a config file:
 
+        # An explicitly-given conf-file trumps any specified at creation
+        $args{conf_file} = $self->{conf_file}
+            if (exists($self->{conf_file}) and (! exists $args{conf_file}));
         unless ($args{conf_file} or $args{port})
         {
             $args{port} = $self->{port} || $self->{__port} || 9000;
@@ -1126,8 +1199,8 @@ sub dispatch
     my $self     = shift;
     my $xml      = shift;
 
-    my ($reqobj, @data, @paramtypes, $resptype, $response, $signature, $name,
-        $meth);
+    my ($reqobj, @data, @params, @paramtypes, $resptype, $response, $signature,
+        $name, $meth);
 
     if (ref($xml) eq 'SCALAR')
     {
@@ -1189,7 +1262,8 @@ sub dispatch
 
     # Create the param list.
     # The type for the response will be derived from the matching signature
-    @paramtypes = map { $_->type } @data;
+    @paramtypes = map { $_->type  } @data;
+    @params     = map { $_->value } @data;
     $signature = join(' ', @paramtypes);
     $resptype = $meth->match_signature($signature);
     # Since there must be at least one signature with a return value (even
@@ -1203,15 +1277,16 @@ sub dispatch
     # Set up these for the use of the called method
     local $self->{signature} = [ $resptype, @paramtypes ];
     local $self->{method_name} = $name;
+    # For RPC::XML::Method (and derivatives), pass the server object
+    unshift(@params, $self) if ($meth->isa('RPC::XML::Method'));
+
     # Now take a deep breath and call the method with the arguments
-    eval {
-        $response = $meth->{code}->($self, map { $_->value } @data);
-    };
+    eval { $response = $meth->{code}->(@params); };
     if ($@)
     {
         # Report a Perl-level error/failure
-        $response = RPC::XML::fault->new(302,
-                                         "Method $name returned error: $@");
+        $response =
+            RPC::XML::fault->new(302, "Method $name returned error: $@");
     }
     $self->{__requests}++;
     $meth->{called}++;
@@ -1365,6 +1440,9 @@ sub add_methods_in_dir
     $self;
 }
 
+# Same as above, but for name-symmetry
+sub add_procs_in_dir { shift->add_methods_in_dir(@_) }
+
 ###############################################################################
 #
 #   Sub Name:       delete_method
@@ -1401,6 +1479,9 @@ sub delete_method
     }
 }
 
+# Same as above, but for name-symmetry
+sub delete_proc { shift->delete_method(@_) }
+
 ###############################################################################
 #
 #   Sub Name:       list_methods
@@ -1418,6 +1499,9 @@ sub list_methods
 {
     keys %{$_[0]->{__method_table}};
 }
+
+# Same as above, but for name-symmetry
+sub list_procs { shift->list_methods(@_) }
 
 ###############################################################################
 #
@@ -1502,6 +1586,9 @@ sub share_methods
 
     $self;
 }
+
+# Same as above, but for name-symmetry
+sub share_procs { shift->share_methods(@_) }
 
 ###############################################################################
 #
@@ -1588,6 +1675,9 @@ sub copy_methods
 
     $self;
 }
+
+# Same as above, but for name-symmetry
+sub copy_procs { shift->copy_methods(@_) }
 
 ###############################################################################
 #
