@@ -96,6 +96,7 @@ kill 'INT', $child;
 ok(ref $srv->delete_method('perl.test.suite.test1'));
 
 # Start the server again
+sleep 1; # To allow the old sockets time enough to go away
 $child = start_server($srv);
 $bucket = 0;
 $SIG{ALRM} = sub { $bucket++ };
@@ -115,8 +116,8 @@ else
     ok(! $res->is_error);
     $res = $parser->parse($res->content);
     ok(ref($res) eq 'RPC::XML::response');
-    ok($res->is_fault);
-    ok($res->value->value->{faultString} =~ /Unknown method/);
+    ok(ref($res) and $res->is_fault);
+    ok(ref($res) and ($res->value->value->{faultString} =~ /Unknown method/));
 }
 kill 'INT', $child;
 
