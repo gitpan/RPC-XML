@@ -9,7 +9,7 @@
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.19 2001/11/30 11:54:38 rjray Exp $
+#   $Id: Server.pm,v 1.21 2001/12/12 06:56:06 rjray Exp $
 #
 #   Description:    This class implements an RPC::XML server, using the core
 #                   XML::RPC transaction code. The server may be created with
@@ -42,6 +42,7 @@
 #                   list_methods
 #                   share_methods
 #                   copy_methods
+#                   timeout
 #
 #   Libraries:      AutoLoader
 #                   HTTP::Daemon
@@ -78,7 +79,7 @@ require RPC::XML;
 require RPC::XML::Parser;
 require RPC::XML::Method;
 
-$VERSION = do { my @r=(q$Revision: 1.19 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.21 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 1;
 
@@ -104,7 +105,7 @@ sub new
     my %args = @_;
 
     my ($self, $http, $resp, $host, $port, $queue, $path, $URI, $srv_name,
-        $srv_version);
+        $srv_version, $timeout);
 
     $class = ref($class) || $class;
     $self = bless {}, $class;
@@ -113,7 +114,13 @@ sub new
     $srv_name    = $args{server_name}    || $class;
     $self->{__version} = "$srv_name/$srv_version";
 
-    unless ($args{no_http})
+    if ($args{no_http})
+    {
+        $self->{__host} = $args{host} || '';
+        $self->{__port} = $args{port} || '';
+        delete @args{qw(host port)};
+    }
+    else
     {
         require HTTP::Daemon;
 
@@ -157,6 +164,7 @@ sub new
     $self->{__debug}           = $args{debug} || 0;
     $self->{__parser}          = RPC::XML::Parser->new();
     $self->{__xpl_path}        = $args{xpl_path} || [];
+    $self->{__timeout}         = $args{timeout}  || 10;
 
     $self->add_default_methods unless ($args{no_default});
 
@@ -182,7 +190,18 @@ sub url
     return $self->{__daemon}->url if $self->{__daemon};
     return undef unless ($self->{__host});
 
-    "http://$self->{__host}:$self->{__port}$self->{__path}";
+    if ($self->{__port} == 443)
+    {
+        return "https://$self->{__host}$self->{__path}";
+    }
+    elsif ($self->{__port} == 80)
+    {
+        return "http://$self->{__host}$self->{__path}";
+    }
+    else
+    {
+        return "http://$self->{__host}:$self->{__port}$self->{__path}";
+    }
 }
 
 sub product_tokens
@@ -361,6 +380,13 @@ C<add_method> call, this argument may be used to specify one or more
 additional directories to be searched when the passed-in filename is a
 relative path. The value for this must be an array reference. See also
 B<add_method> and B<xpl_path>, below.
+
+=item B<timeout>
+
+You can call this method to set the timeout of new connections after
+they are received.  This function returns the old timeout value.  If
+you pass in no value then it will return the old value without
+modifying the current value.  The default value is 10 seconds.
 
 =item B<auto_methods>
 
@@ -935,6 +961,7 @@ sub server_loop
 
             last if $exit_now;
             next unless $conn;
+            $conn->timeout($self->{__timeout});
             $self->process_request($conn);
             $conn->close;
             undef $conn; # Free up any lingering resources
@@ -1560,4 +1587,33 @@ sub copy_methods
     }
 
     $self;
+}
+
+###############################################################################
+#
+#   Sub Name:       timeout
+#
+#   Description:    This sets the timeout for processing connections after
+#                   a new connection has been accepted.  It returns the old
+#                   timeout value.  If you pass in no value, it returns
+#                   the current timeout.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object reference/static class
+#                   $timeout  in      ref       New timeout value
+#
+#   Returns:        $self->{__timeout}
+#
+###############################################################################
+sub timeout
+{
+    my $self    = shift;
+    my $timeout = shift;
+
+    my $old_timeout = $self->{__timeout};
+    if ($timeout)
+    {
+        $self->{__timeout} = $timeout;
+    }
+    return $old_timeout;
 }
