@@ -9,7 +9,7 @@
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.11 2001/06/13 05:02:45 rjray Exp $
+#   $Id: Server.pm,v 1.13 2001/06/26 05:27:49 rjray Exp $
 #
 #   Description:    This class implements an RPC::XML server, using the core
 #                   XML::RPC transaction code. The server may be created with
@@ -74,7 +74,7 @@ require URI;
 require RPC::XML;
 require RPC::XML::Parser;
 
-$VERSION = do { my @r=(q$Revision: 1.11 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.13 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 1;
 
@@ -109,8 +109,8 @@ sub new
     $class = ref($class) || $class;
     $self = bless {}, $class;
 
-    $srv_version = $args{server_version} || $RPC::XML::Server::VERSION;
-    $srv_name    = $args{server_name}    || __PACKAGE__;
+    $srv_version = $args{server_version} || $self->version;
+    $srv_name    = $args{server_name}    || $class;
     $self->{__version} = "$srv_name/$srv_version";
 
     unless ($args{no_http})
@@ -317,7 +317,7 @@ RPC::XML::Server - A sample server implementation based on RPC::XML
     # Several of these, most likely:
     $srv->add_method(...);
     ...
-    $srv->accept_loop; # Never returns
+    $srv->server_loop; # Never returns
 
 =head1 DESCRIPTION
 
@@ -540,7 +540,7 @@ installation directory or the current working directory are searched.
 Returns a hash reference containing the current binding for the published
 method NAME. If there is no such method known to the server, then C<undef> is
 returned. The hash has the same key and value pairs as for C<add_method>,
-above. Thus, hash reference returned is suitable for passing back to
+above. Thus, the hash reference returned is suitable for passing back to
 C<add_method>. This facilitates temporary changes in what a published name
 maps to.
 
