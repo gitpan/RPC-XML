@@ -1,6 +1,6 @@
 RPC::XML - An implementation of XML-RPC
 
-Version: 0.35 (seventh release)
+Version: 0.37
 
 WHAT IS IT
 
@@ -65,7 +65,11 @@ The Artistic License: http://language.perl.com/misc/Artistic.html
 
 CHANGES
 
-See the ChangeLog file for the full details. There are some very significant
-changes in this release, particularly in terms of the send_request method of
-RPC::XML::Client and the general handling/managing of published routines in the
-server classes. Please see those manual pages, as well, for full details.
+Applied a patch to RPC::XML::Server from Tino Wuensche
+(<tino_wuensche@yahoo.com>) that fixed some of the signal-handling and
+exit-case-handling in server_loop().
+
+Fixed a bug in RPC::XML::Procedure found by a user (a former co-worker
+from my Denver days, coincidentally enough) that would trigger when
+auto_methods was set to 1 on a server object, but the request had no
+matching file anywhere in the search path.
