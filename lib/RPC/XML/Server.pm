@@ -9,7 +9,7 @@
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.14 2001/07/08 23:25:27 rjray Exp $
+#   $Id: Server.pm,v 1.18 2001/10/08 00:48:04 rjray Exp $
 #
 #   Description:    This class implements an RPC::XML server, using the core
 #                   XML::RPC transaction code. The server may be created with
@@ -26,18 +26,16 @@
 #                   port
 #                   requests
 #                   response
-#                   debug
 #                   xpl_path
 #                   add_method
+#                   method_from_file
 #                   get_method
-#                   method_to_ref
 #                   server_loop
 #                   post_configure_hook
 #                   pre_loop_hook
 #                   process_request
 #                   dispatch
 #                   call
-#                   load_XPL_file
 #                   add_default_methods
 #                   add_methods_in_dir
 #
@@ -45,6 +43,8 @@
 #                   HTTP::Daemon
 #                   HTTP::Status
 #                   RPC::XML
+#                   RPC::XML::Parser
+#                   RPC::XML::Method
 #
 #   Global Consts:  $VERSION
 #                   $INSTALL_DIR
@@ -73,8 +73,9 @@ require URI;
 
 require RPC::XML;
 require RPC::XML::Parser;
+require RPC::XML::Method;
 
-$VERSION = do { my @r=(q$Revision: 1.14 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.18 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 1;
 
@@ -118,7 +119,7 @@ sub new
         $host = $args{host}   || '';
         $port = $args{port}   || '';
         $queue = $args{queue} || 5;
-        $http = new HTTP::Daemon (($host ? (LocalHost => $host) : ()),
+        $http = HTTP::Daemon->new(($host ? (LocalHost => $host) : ()),
                                   ($port ? (LocalPort => $port) : ()),
                                   ($queue ? (Listen => $queue)  : ()));
         return "${class}::new: Unable to create HTTP::Daemon object"
@@ -131,7 +132,7 @@ sub new
         # Remove those we've processed
         delete @args{qw(host port queue)};
     }
-    $resp = new HTTP::Response;
+    $resp = HTTP::Response->new();
     return "${class}::new: Unable to create HTTP::Response object"
         unless $resp;
     $resp->header(# This is essentially the same string returned by the
@@ -147,12 +148,12 @@ sub new
     $self->{__path}            = $args{path} || '';
     $self->{__started}         = 0;
     $self->{__method_table}    = {};
-    $self->{__signature_table} = {};
+    $self->{__method_class}    = $args{method_class} || 'RPC::XML::Method';
     $self->{__requests}        = 0;
     $self->{__auto_methods}    = $args{auto_methods} || 0;
     $self->{__auto_updates}    = $args{auto_updates} || 0;
     $self->{__debug}           = $args{debug} || 0;
-    $self->{__parser}          = new RPC::XML::Parser;
+    $self->{__parser}          = RPC::XML::Parser->new();
     $self->{__xpl_path}        = $args{xpl_path} || [];
 
     $self->add_default_methods unless ($args{no_default});
@@ -162,7 +163,6 @@ sub new
     # Copy the rest over untouched
     $self->{$_} = $args{$_} for (keys %args);
 
-    $self->debug("New %s created, path = %s", ref($self), $self->{__path});
     $self;
 }
 
@@ -204,18 +204,6 @@ sub port     { shift->{__port} }
 sub requests { shift->{__requests} }
 sub response { shift->{__response} }
 
-sub debug
-{
-    my $self = shift;
-    my $fmt  = shift;
-
-    my $debug = ref($self) ? $self->{__debug} : 1;
-
-    $fmt && $debug && printf STDERR "%p: $fmt\n", (ref $self) ? $self : 0, @_;
-
-    $debug;
-}
-
 # Get/set the search path for XPL files
 sub xpl_path
 {
@@ -249,14 +237,14 @@ sub add_method
     my $self = shift;
     my $meth = shift;
 
-    my ($new_meth, $name, $val, $sig, @sig);
+    my ($name, $val);
+    my $class = $self->{__method_class};
 
     my $me = ref($self) . '::add_method';
-    $self->debug("Entering add_method for %s", $meth);
 
     if (! ref($meth))
     {
-        $val = load_XPL_file($self, $meth);
+        $val = $self->method_from_file($meth);
         if (! ref($val))
         {
             return "$me: Error loading from file $meth: $val";
@@ -266,39 +254,23 @@ sub add_method
             $meth = $val;
         }
     }
-    elsif (! (ref($meth) eq 'HASH'))
+    elsif (ref($meth) eq 'HASH')
     {
-        return "$me: Method argument must be hash ref or file name";
+        $meth = $class->new($meth);
+    }
+    elsif (! UNIVERSAL::isa($meth, $class))
+    {
+        return "$me: Method argument must be a $class object, a hash " .
+            'reference or a file name';
     }
 
     # Do some sanity-checks
-    return "$me: 'NAME' cannot be a null string" unless $meth->{name};
-    return "$me: 'CODE' argument must be a code reference (not a name)"
-        unless (ref($meth->{code}) eq 'CODE');
-    return "$me: 'SIGNATURE' argument must specify at least one signature"
-        unless (ref($meth->{signature}) eq 'ARRAY' and
-                (@{$meth->{signature}}));
+    return "$me: Method missing required data; check name, code and/or " .
+        'signature' unless $meth->is_valid;
 
-    # Convert any space-separated signature specifications to array refs
-    @sig = @{$meth->{signature}};
-    @sig = map { (ref $_) ? [ @$_ ] : [ split(/ /, $_) ] } @sig;
-    # Copy the hash contents over
-    $new_meth = { map { $_ => $meth->{$_} } (keys %$meth) };
-    $new_meth->{signature} = \@sig;
+    $name = $meth->name;
+    $self->{__method_table}->{$name} = $meth;
 
-    $name = $new_meth->{name};
-    $self->{__method_table}->{$name} = $new_meth;
-
-    # Create an easily-indexed table of valid method signatures for tests
-    $self->{__signature_table}->{$name} = {};
-    for $sig (@sig)
-    {
-        # The first element of the array is the type of the return value
-        $val = join('|', '+', @$sig[1 .. $#$sig]);
-        $self->{__signature_table}->{$name}->{$val} = $sig->[0];
-    }
-
-    $self->debug("Exiting add_method");
     $self;
 }
 
@@ -313,7 +285,7 @@ RPC::XML::Server - A sample server implementation based on RPC::XML
     use RPC::XML::Server;
 
     ...
-    $srv = new RPC::XML::Server (port => 9000);
+    $srv = RPC::XML::Server->new(port => 9000);
     # Several of these, most likely:
     $srv->add_method(...);
     ...
@@ -409,10 +381,14 @@ off. As with the auto-loading of methods, this represents a security risk, and
 should only be permitted by a server administrator with fully informed
 acknowledgement and consent.
 
-=item B<debug>
+=item B<method_class>
 
-The value passed with this option is treated as a boolean toggle to decide
-whether debugging statements should be sent to the logging facility.
+By default, the server class uses the B<RPC::XML::Method> class to manage the
+manipulation and tracking of the methods the server objects make available. If
+the developer chooses to sub-class this method implementation (or even provide
+a completely new one), the name of the class must be passed in via this
+parameter. It will be used in all the internal creation/manipulation routines
+within the server class.
 
 =back
 
@@ -512,13 +488,16 @@ has such an externally-visible method).
 =back
 
 If a file is passed, then it is expected to be in the XML-based format,
-described later (see L<"Specifying Server-Side Remote Methods">). If the
+described in the B<RPC::XML::Method> manual (see L<RPC::XML::Method>). If the
 name passed is not an absolute pathname, then the file will be searched for
 in any directories specified when the object was instantiated, then in the
 directory into which this module was installed, and finally in the current
 working directory. If the operation fails, the return value will be a
 non-reference, an error message. Otherwise, the return value is the object
 reference.
+
+For more on the creation and manipulation of methods as objects, see
+L<RPC::XML::Method>.
 
 =item xpl_path([LISTREF])
 
@@ -532,19 +511,14 @@ installation directory or the current working directory are searched.
 
 =item get_method(NAME)
 
-Returns a hash reference containing the current binding for the published
-method NAME. If there is no such method known to the server, then C<undef> is
-returned. The hash has the same key and value pairs as for C<add_method>,
-above. Thus, the hash reference returned is suitable for passing back to
-C<add_method>. This facilitates temporary changes in what a published name
-maps to.
-
-=item method_to_ref(NAME)
-
-This is a shorter implementation of the above, that only returns the code
-reference associated with the named method. It returns C<undef> if no such
-method exists. Since the methods are stored internally as closures, this is
-the only reliable way of calling one method from within another.
+Returns a reference to an object of the class B<RPC::XML::Method>, which is
+the current binding for the published method NAME. If there is no such method
+known to the server, then C<undef> is returned. The object is implemented as a
+hash, and has the same key and value pairs as for C<add_method>, above. Thus,
+the reference returned is suitable for passing back to C<add_method>. This
+facilitates temporary changes in what a published name maps to. Note that this
+is a referent to the object as stored on the server object itself, and thus
+changes to it could affect the behavior of the server.
 
 =item server_loop(HASH)
 
@@ -643,97 +617,10 @@ subclass of it) require that methods be explicitly published in one of the
 several ways provided. Methods may be added directly within code by using
 C<add_method> as described above, with full data provided for the code
 reference, signature list, etc. The C<add_method> technique can also be used
-with a file that conforms to a specific XML-based format. Entire directories
-of files may be added using C<add_methods_in_dir>, which merely reads the
-given directory for files that appear to be method definitions.
-
-This section focuses on the way in which methods are expressed in these files,
-referred to here as "XPL files" due to the C<*.xpl> filename extension
-(which stands for "XML Procedure Layout"). This mini-dialect, based on XML,
-is meant to provide a simple means of specifying method definitions separate
-from the code that comprises the application itself. Thus, methods may
-theoretically be added, removed, debugged or even changed entirely without
-requiring that the server application itself be rebuilt (or, possibly, without
-it even being restarted).
-
-=head3 The XPL file structure
-
-The B<XPL Procedure Layout> dialect is a very simple application of XML to the
-problem of expressing the method in such a way that it could be useful to
-other packages than this one, or useful in other contexts than this one.
-
-The lightweight DTD for the layout can be summarized as:
-
-        <!ELEMENT  methoddef  (name, version?, hidden?, signature+,
-                               help?, code)>
-        <!ELEMENT  name       (#PCDATA)>
-        <!ELEMENT  version    (#PCDATA)>
-        <!ELEMENT  hidden     EMPTY>
-        <!ELEMENT  signature  (#PCDATA)>
-        <!ELEMENT  help       (#PCDATA)>
-        <!ELEMENT  code       (#PCDATA)>
-        <!ATTLIST  code       language (#PCDATA)>
-
-The containing tag is always C<E<lt>methoddefE<gt>>. The tags that specify
-name, signatures and the code itself must always be present. Some optional
-information may also be supplied. The "help" text, or what an introspection
-API would expect to use to document the method, is also marked as optional.
-Having some degree of documentation for all the methods a server provides is
-a good rule of thumb, however.
-
-The default methods that this package provides are turned into XPL files by
-the B<make_method> tool, described later. The final forms of these may serve
-as direct examples of what the file should look like.
-
-=head3 Information used only for book-keeping
-
-Some of the information in the XPL file is only for book-keeping: the version
-stamp of a method is never involved in the invocation. The server also keeps
-track of the last-modified time of the file the method is read from, as well
-as the full directory path to that file. The C<E<lt>hidden /E<gt>> tag is used
-to identify those methods that should not be exposed to the outside world
-through any sort of introspection/documentation API. They are still available
-and callable, but the client must possess the interface information in order
-to do so.
-
-=head3 The information crucial to the method
-
-The name, signatures and code must be present for obvious reasons. The
-C<E<lt>nameE<gt>> tag tells the server what external name this procedure is
-known by. The C<E<lt>signatureE<gt>> tag, which may appear more than once,
-provides the definition of the interface to the function in terms of what
-types and quantity of arguments it will accept, and for a given set of
-arguments what the type of the returned value is. Lastly is the
-C<E<lt>codeE<gt>> tag, without which there is no procedure to remotely call.
-
-=head3 Why the <code> tag allows multiple languages
-
-Note that the C<E<lt>codeE<gt>> tag is the only one with an attribute, in this
-case "language". This is designed to allow for one XPL file to provide a given
-method in multiple languages. Why, one might ask, would there be a need for
-this?
-
-It is the hope behind this package that collections of RPC suites may one
-day be made available as separate entities from this specific software
-package. Given this hope, it is not unreasonable to suggest that such a
-suite of code might be implemented in more than one language (each of Perl,
-Python, Ruby and Tcl, for example). Languages which all support the means by
-which to take new code and add it to a running process on demand (usually
-through an "C<eval>" keyword or something similar). If the file F<A.xpl> is
-provided with implementations in all four of those languages, the name, help
-text, signature and even hidden status would likely be identical. So, why
-not share the non-language-specific elements in the spirit of re-use?
-
-=head3 The "make_method" utility
-
-The utility script C<make_method> is provided as a part of this package. It
-allows for the automatic creation of XPL files from either command-line
-information or from template files. It has a wide variety of features and
-options, and is out of the scope of this particular manual page. The package
-F<Makefile.PL> features an example of engineering the automatic generation of
-XPL files and their delivery as a part of the normal Perl module build
-process. Using this tool is highly recommended over managing XPL files
-directly.
+with a file that conforms to a specific XML-based format (detailed in the
+manual page for the B<RPC::XML::Method> class, see L<RPC::XML::Method>). Entire
+directories of files may be added using C<add_methods_in_dir>, which merely
+reads the given directory for files that appear to be method definitions.
 
 =head2 How Methods Are Called
 
@@ -761,6 +648,11 @@ of the datatypes specifies the expected return type. The remainder (if any)
 refer to the arguments themselves.
 
 =back
+
+Note that by passing the server object reference first, the methods themselves
+are essentially expected to behave as actual methods of the server class, as
+opposed to ordinary functions. Of course, they can also discard the initial
+argument completely.
 
 The methods should not make (excessive) use of global variables. Likewise,
 methods should not change their package space within the definition. Bad
@@ -848,9 +740,10 @@ always be interpreted as errors unless otherwise noted.
 
 =head1 CAVEATS
 
-This is a reference implementation in which clarity of process and readability
-of the code took precedence over general efficiency. Much, if not all, of this
-can be written more compactly and/or efficiently.
+This began as a reference implementation in which clarity of process and
+readability of the code took precedence over general efficiency. It is now
+being maintained as production code, but may still have parts that could be
+written more efficiently.
 
 =head1 CREDITS
 
@@ -861,7 +754,7 @@ specification.
 =head1 LICENSE
 
 This module is licensed under the terms of the Artistic License that covers
-Perl itself. See <http://language.perl.com/misc/Artistic.html> for the
+Perl. See <http://language.perl.com/misc/Artistic.html> for the
 license.
 
 =head1 SEE ALSO
@@ -875,6 +768,47 @@ Randy J. Ray <rjray@blackperl.com>
 =cut
 
 __END__
+
+###############################################################################
+#
+#   Sub Name:       method_from_file
+#
+#   Description:    Create a RPC::XML::Method (or derivative) object from the
+#                   passed-in file name, using the object's search path if the
+#                   name is not already absolute.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#                   $file     in      scalar    Name of file to load
+#
+#   Returns:        Success:    Method-object reference
+#                   Failure:    error message
+#
+###############################################################################
+sub method_from_file
+{
+    my $self = shift;
+    my $file = shift;
+
+    my $class = $self->{__method_class};
+
+    unless (File::Spec->file_name_is_absolute($file))
+    {
+        my ($path, @path);
+        push(@path, @{$self->xpl_path}) if (ref $self);
+        for (@path, @XPL_PATH)
+        {
+            $path = File::Spec->catfile($_, $file);
+            if (-e $path) { $file = File::Spec->canonpath($path); last; }
+        }
+    }
+    # Just in case it still didn't appear in the path, we really want an
+    # absolute path:
+    $file = File::Spec->rel2abs($file)
+        unless (File::Spec->file_name_is_absolute($file));
+
+    $class->new($file);
+}
 
 ###############################################################################
 #
@@ -893,7 +827,7 @@ __END__
 #
 #   Environment:    None.
 #
-#   Returns:        Success:    hashref
+#   Returns:        Success:    Method-class reference
 #                   Failure:    undef
 #
 ###############################################################################
@@ -904,21 +838,7 @@ sub get_method
 
     return undef unless ($name and $self->{__method_table}->{$name});
 
-    my $meth = {};
-
-    map { $meth->{$_} = $self->{__method_table}->{$name}->{$_} }
-        (keys %{$self->{__method_table}->{$name}});
-
-    $meth;
-}
-
-# Much plainer version of the above
-sub method_to_ref
-{
-    my $self = shift;
-    my $name = shift;
-
-    $self->{__method_table}->{$name}->{code};
+    $self->{__method_table}->{$name};
 }
 
 ###############################################################################
@@ -947,7 +867,6 @@ sub server_loop
     my $self = shift;
     my %args = @_;
 
-    $self->debug("Entering server_loop");
     if ($self->{__daemon})
     {
         my ($conn, $req, $resp, $reqxml, $return, $respxml, $exit_now,
@@ -1005,7 +924,6 @@ sub server_loop
         $self->run(%args);
     }
 
-    $self->debug("Exiting server_loop");
     return;
 }
 
@@ -1085,7 +1003,6 @@ sub process_request
 
     my ($req, $reqxml, $resp, $respxml);
 
-    $self->debug("Entering process_request");
     unless ($conn and ref($conn))
     {
         $conn = $self->{server}->{client};
@@ -1121,7 +1038,6 @@ sub process_request
         }
     }
 
-    $self->debug("Entering process_request");
     return;
 }
 
@@ -1156,9 +1072,9 @@ sub dispatch
     my $self     = shift;
     my $xml      = shift;
 
-    my ($reqobj, @data, @paramtypes, $resptype, $response, $signature, $name);
+    my ($reqobj, @data, @paramtypes, $resptype, $response, $signature, $name,
+        $meth);
 
-    $self->debug("Entering dispatch");
     if (ref($xml) eq 'SCALAR')
     {
         $reqobj = $self->{__parser}->parse($$xml);
@@ -1187,7 +1103,7 @@ sub dispatch
     @data = @{$reqobj->args};
     # First test: do we have this method?
     $name = $reqobj->name;
-    if (! $self->{__method_table}->{$name})
+    if (! defined($meth = $self->get_method($name)))
     {
         if ($self->{__auto_methods})
         {
@@ -1198,7 +1114,7 @@ sub dispatch
             # If method is still not in the table, we were unable to load it
             return RPC::XML::response
                 ->new(RPC::XML::fault->new(300, "Unknown method: $name"))
-                    unless ($self->{__method_table}->{$name});
+                    unless ($meth = $self->get_method($name));
         }
         else
         {
@@ -1207,12 +1123,10 @@ sub dispatch
         }
     }
     # Check the mod-time of the file the method came from, if the test is on
-    if ($self->{__auto_updates} && $self->{__method_table}->{$name}->{file} &&
-        ($self->{__method_table}->{$name}->{mtime} <
-         (stat $self->{__method_table}->{$name}->{file})[9]))
+    if ($self->{__auto_updates} && $meth->{file} &&
+        ($meth->{mtime} < (stat $meth->{file})[9]))
     {
-        my $ret = $self->add_method($self->{__method_table}->{$name}->{file});
-
+        $ret = $meth->reload;
         return RPC::XML::response
             ->new(RPC::XML::fault
                   ->new(302, "Reload of method $name failed: $ret"))
@@ -1222,8 +1136,8 @@ sub dispatch
     # Create the param list.
     # The type for the response will be derived from the matching signature
     @paramtypes = map { $_->type } @data;
-    $signature = join('|', '+', @paramtypes);
-    $resptype = $self->{__signature_table}->{$name}->{$signature};
+    $signature = join(' ', @paramtypes);
+    $resptype = $meth->match_signature($signature);
     # Since there must be at least one signature with a return value (even
     # if the param list is empty), this tells us if the signature matches:
     return RPC::XML::response
@@ -1237,8 +1151,7 @@ sub dispatch
     local $self->{method_name} = $name;
     # Now take a deep breath and call the method with the arguments
     eval {
-        $response = &{$self->{__method_table}->{$name}->{code}}
-            ($self, map { $_->value } @data);
+        $response = &{$meth->{code}}($self, map { $_->value } @data);
     };
     if ($@)
     {
@@ -1247,8 +1160,8 @@ sub dispatch
                                          "Method $name returned error: $@");
     }
     $self->{__requests}++;
+    $meth->{called}++;
 
-    $self->debug("Exiting dispatch");
     return RPC::XML::response->new($response);
 }
 
@@ -1279,6 +1192,8 @@ sub call
     my $self = shift;
     my ($name, @args) = @_;
 
+    my $meth;
+
     #
     # Two VERY important notes here: The values in @args are not pre-treated
     # in any way, so not only should the receiver understand what they're
@@ -1290,19 +1205,28 @@ sub call
 
     my $response;
 
-    if (! $self->{__method_table}->{$name})
+    if (! defined($meth = $self->get_method($name)))
     {
         # Try to load this dynamically on the fly, from any of the dirs that
         # are in this object's @xpl_path
         (my $loadname = $name) =~ s/^system\.//;
         $self->add_method("$loadname.xpl");
+        $meth = $self->get_method($name);
     }
     # If the method is still not in the table, we were unable to load it
-    return "Unknown method: $name" unless ($self->{__method_table}->{$name});
+    return "Unknown method: $name" unless (ref $meth);
+    # Check the mod-time of the file the method came from, if the test is on
+    if ($self->{__auto_updates} && $meth->{file} &&
+        ($meth->{mtime} < (stat $meth->{file})[9]))
+    {
+        $ret = $meth->reload;
+        return "Reload of method $name failed: $ret" unless (ref $ret);
+    }
+
     # Though we have no signature, we can still tell them what name was called
     local $self->{method_name} = $name;
     eval {
-        $response = &{$self->{__method_table}->{$name}->{code}}($self, @args);
+        $response = &{$meth->{code}}($self, @args);
     };
     if ($@)
     {
@@ -1311,109 +1235,6 @@ sub call
     }
 
     $response;
-}
-
-###############################################################################
-#
-#   Sub Name:       load_XPL_file
-#
-#   Description:    Load a XML-encoded method description (generally denoted
-#                   by a *.xpl suffix) and return the relevant information.
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#                   $file     in      scalar    File to load
-#
-#   Globals:        @XPL_PATH
-#
-#   Environment:    None.
-#
-#   Returns:        Success:    hashref of values
-#                   Failure:    error string
-#
-###############################################################################
-sub load_XPL_file
-{
-    my $self = shift;
-    my $file = shift;
-
-    require XML::Parser;
-
-    # We only barely use the value $self, but this makes the routine callable
-    # as a class method, which is easier for sub-classes than having them have
-    # to import the function, or hard-code the class.
-
-    my ($signature, $code, $codetext, $return, $accum, $P, @path, %attr);
-    local *F;
-
-    $self->debug("Entering load_XPL_file for %s", $file);
-    unless (File::Spec->file_name_is_absolute($file))
-    {
-        my $path;
-        push(@path, @{$self->xpl_path}) if (ref $self);
-        for (@path, @XPL_PATH)
-        {
-            $path = File::Spec->catfile($_, $file);
-            if (-e $path) { $file = $path; last; }
-        }
-    }
-
-    $return = {};
-    # So these don't end up undef, since they're optional elements
-    $return->{hidden} = 0; $return->{version} = ''; $return->{help} = '';
-    $return->{signature} = [];
-    open(F, "< $file");
-    return "Error opening $file for reading: $!" if ($?);
-    $P = XML::Parser
-        ->new(Handlers => {Char  => sub { $accum .= $_[1] },
-                           Start => sub { %attr = splice(@_, 2) },
-                           End   =>
-                           sub {
-                               my $elem = $_[1];
-
-                               $accum =~ s/^[\s\n]+//;
-                               $accum =~ s/[\s\n]+$//;
-                               if ($elem eq 'signature')
-                               {
-                                   push(@{$return->{signature}},
-                                        [ split(/ /, $accum) ]);
-                               }
-                               elsif ($elem eq 'code')
-                               {
-                                   $return->{$elem} = $accum
-                                       unless ($attr{language} and
-                                               $attr{language} ne 'perl');
-                               }
-                               else
-                               {
-                                   $return->{$elem} = $accum;
-                               }
-
-                               %attr = ();
-                               $accum = '';
-                           }});
-    return "Error creating XML::Parser object" unless $P;
-    $self->debug("Parser obj created: %s", "$P");
-    # Trap any errors
-    eval { $P->parse(*F) };
-    return "Error parsing $file: $@" if $@;
-    $self->debug("Parse finished");
-
-    # Try to normalize $codetext before passing it to eval
-    ($codetext = $return->{code}) =~
-        s/sub[\s\n]+[\w:]+[\s\n]+\{/\$code = sub \{/;
-    eval "$codetext";
-    return "Error creating anonymous sub: $@" if $@;
-
-    $return->{code} = $code;
-    # The XML::Parser approach above gave us an empty "methoddef" key
-    delete $return->{methoddef};
-    # Add the file's mtime for when we check for stat-based reloading
-    $return->{mtime} = (stat $file)[9];
-    $return->{file} = $file;
-
-    $self->debug("Exiting load_XPL_file");
-    $return;
 }
 
 ###############################################################################
@@ -1437,7 +1258,7 @@ sub load_XPL_file
 ###############################################################################
 sub add_default_methods
 {
-    add_methods_in_dir(shift, $INSTALL_DIR, @_);
+    shift->add_methods_in_dir($INSTALL_DIR, @_);
 }
 
 ###############################################################################
@@ -1470,7 +1291,6 @@ sub add_methods_in_dir
     my $detail = 0;
     my (%details, $ret);
 
-    $self->debug("Entering add_methods_in_dir for %s", $dir);
     if (@details)
     {
         $detail = 1;
@@ -1498,6 +1318,5 @@ sub add_methods_in_dir
         return $ret unless ref $ret;
     }
 
-    $self->debug("Exiting add_methods_in_dir");
     $self;
 }
