@@ -8,7 +8,7 @@
 #
 ###############################################################################
 #
-#   $Id: Parser.pm,v 1.7 2002/12/30 07:22:20 rjray Exp $
+#   $Id: Parser.pm,v 1.9 2003/01/24 11:01:40 rjray Exp $
 #
 #   Description:    This is the RPC::XML::Parser class, a container for the
 #                   XML::Parser class. It was moved here from RPC::XML in
@@ -38,7 +38,7 @@ use 5.005;
 use strict;
 use vars qw($VERSION @ISA);
 use subs qw(error stack_error new message_init message_end tag_start tag_end
-            char_data parse);
+            final char_data parse);
 
 # These constants are only used by the internal stack machine
 use constant PARSE_ERROR => 0;
@@ -83,10 +83,11 @@ use constant TAG2TOKEN   => { methodCall        => METHOD,
                               name              => STRUCTNAME  };
 
 use XML::Parser;
+require File::Spec;
 
 require RPC::XML;
 
-$VERSION = do { my @r=(q$Revision: 1.7 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.9 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 ###############################################################################
 #
@@ -101,8 +102,6 @@ $VERSION = do { my @r=(q$Revision: 1.7 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r }
 #
 #   Globals:        $RPC::XML::ERROR
 #
-#   Environment:    None.
-#
 #   Returns:        Success:    object ref
 #                   Failure:    undef
 #
@@ -113,10 +112,7 @@ sub new
     my %attrs = @_;
 
     my $self = {};
-    if (keys %attrs)
-    {
-        for (keys %attrs) { $self->{$_} = $attrs{$_} }
-    }
+    %$self = %attrs if (keys %attrs);
 
     bless $self, $class;
 }
@@ -134,10 +130,6 @@ sub new
 #                   $stream   in      scalar    Either the string to parse or
 #                                                 an open filehandle of sorts
 #
-#   Globals:        None.
-#
-#   Environment:    None.
-#
 #   Returns:        Success:    ref to request or response object
 #                   Failure:    error string
 #
@@ -150,23 +142,21 @@ sub parse
     my $parser = XML::Parser->new(Namespaces => 0, ParseParamEnt => 0,
                                   Handlers =>
                                   {
-                                   Init  => sub { message_init $self, @_ },
-                                   Start => sub { tag_start $self, @_ },
-                                   End   => sub { tag_end $self, @_ },
-                                   Char  => sub { char_data $self, @_ },
-                                   ExternEnt =>
-                                   sub { extern_ent $self, @_ }
+                                   Init      => sub { message_init $self, @_ },
+                                   Start     => sub { tag_start    $self, @_ },
+                                   End       => sub { tag_end      $self, @_ },
+                                   Char      => sub { char_data    $self, @_ },
+                                   Final     => sub { final        $self, @_ },
+                                   ExternEnt => sub { extern_ent   $self, @_ },
                                   });
 
-    eval { $parser->parse($stream) };
+    # If there is no stream given, then create an incremental parser handle
+    # and return it.
+    return $parser->parse_start() unless $stream;
+
+    my $retval;
+    eval { $retval = $parser->parse($stream) };
     return $@ if $@;
-    # Look at the top-most marker, it'll need to be one of the end cases
-    my $marker = pop(@{$self->{stack}});
-    # There should be only on item on the stack after it
-    my $retval = pop(@{$self->{stack}});
-    # If the top-most marker isn't the error marker, check the stack
-    $retval = 'RPC::XML Error: Extra data on parse stack at document end'
-        if ($marker != PARSE_ERROR and (@{$self->{stack}}));
 
     $retval;
 }
@@ -179,6 +169,23 @@ sub message_init
 
     $robj->{stack} = [];
     $self;
+}
+
+# This is called when the parsing process is complete
+sub final
+{
+    my $robj = shift;
+    my $self = shift;
+
+    # Look at the top-most marker, it'll need to be one of the end cases
+    my $marker = pop(@{$robj->{stack}});
+    # There should be only on item on the stack after it
+    my $retval = pop(@{$robj->{stack}});
+    # If the top-most marker isn't the error marker, check the stack
+    $retval = 'RPC::XML Error: Extra data on parse stack at document end'
+        if ($marker != PARSE_ERROR and (@{$robj->{stack}}));
+
+    $retval;
 }
 
 # This gets called each time an opening tag is parsed
@@ -199,6 +206,25 @@ sub tag_start
     {
         # All datatypes are represented on the stack by this generic token
         push(@{$robj->{stack}}, DATATYPE);
+        # If the tag is <base64> and we've been told to use filehandles, set
+        # that up.
+        if ($elem eq 'base64')
+        {
+            return unless ($robj->{base64_to_fh});
+            my ($fh, $file) = (undef, File::Spec->tmpdir);
+
+            $file = $robj->{base64_temp_dir} if ($robj->{base64_temp_dir});
+            $file  = File::Spec->catfile($file, 'b64' . $self->current_byte);
+            unless (open($fh, "+> $file"))
+            {
+                push(@{$robj->{stack}},
+                     "Error opening temp file for base64: $!", PARSE_ERROR);
+                $self->finish;
+            }
+            unlink($file);
+            $robj->{cdata} = $fh;
+            $robj->{spooling_base64_data} = 1;
+        }
     }
     else
     {
@@ -278,6 +304,7 @@ sub tag_end
                             $RPC::XML::ERROR)
             unless ($obj);
         push(@{$robj->{stack}}, $obj, DATAOBJECT);
+        delete $robj->{spooling_base64_data}; # Just in case
     }
     elsif ($elem eq 'value')
     {
@@ -482,7 +509,14 @@ sub char_data
     my $self = shift;
     my $data = shift;
 
-    $robj->{cdata} .= $data;
+    if ($robj->{spooling_base64_data})
+    {
+        print { $robj->{cdata} } $data;
+    }
+    else
+    {
+        $robj->{cdata} .= $data;
+    }
 }
 
 # At some future point, this may be expanded to provide more entities than
@@ -522,19 +556,49 @@ objects are not. The methods are:
 
 =over 4
 
-=item new
+=item new([ARGS])
 
 Create a new instance of the class. Any extra data passed to the constructor
 is taken as key/value pairs (B<not> a hash reference) and attached to the
 object.
 
-=item parse { STRING | STREAM }
+The following parameters are currently recognized:
+
+=over 8
+
+=item base64_to_fh
+
+If passed with a true value, this tells the parser that incoming Base64 data
+is to be spooled to a filehandle opened onto an anonymous temporary file. The
+file itself is unlinked after opening, though the resulting B<RPC::XML::base64>
+object can use its C<to_file> method to save the data to a specific file at a
+later point. No checks on size are made; if this option is set, B<all> Base64
+data goes to filehandles.
+
+=item base64_temp_dir
+
+If this argument is passed, the value is taken as the directory under which
+the temporary files are created. This is so that the application is not locked
+in to the list of directories that B<File::Spec> defaults to with its
+C<tmpdir> method. If this is not passed, the previously-mentioned method is
+used to derive the directory in which to create the temporary files. Only
+relevant if B<base64_to_fh> is set.
+
+=back
+
+=item parse [ { STRING | STREAM } ]
 
 Parse the XML document specified in either a string or a stream. The stream
 may be any file descriptor, derivative of B<IO::Handle>, etc. The return
 value is either an object reference (to one of B<RPC::XML::request> or
 B<RPC::XML::response>) or an error string. Any non-reference return value
 should be treated as an error condition.
+
+If no argument is given, then the C<parse_start> method of B<XML::Parser> is
+used to create a B<XML::Parser::ExpatNB> object, which is returned. This
+object may then be used to parse the data in chunks, rather than a steady
+stream. See the B<XML::Parser> manual page for more details on how this
+works.
 
 =back
 
