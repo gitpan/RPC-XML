@@ -1,15 +1,15 @@
 ###############################################################################
 #
-# This file copyright (c) 2001 by Randy J. Ray <rjray@blackperl.com>,
+# This file copyright (c) 2001-2004 by Randy J. Ray <rjray@blackperl.com>,
 # all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License as distributed with Perl versions 5.005 and later. See
-# http://language.perl.com/misc/Artistic.html
+# http://www.opensource.org/licenses/artistic-license.php
 #
 ###############################################################################
 #
-#   $Id: XML.pm,v 1.30 2004/04/12 10:14:47 rjray Exp $
+#   $Id: XML.pm,v 1.33 2004/12/09 08:50:17 rjray Exp $
 #
 #   Description:    This module provides the core XML <-> RPC conversion and
 #                   structural management.
@@ -28,7 +28,7 @@ package RPC::XML;
 use 5.005;
 use strict;
 use vars qw(@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA $VERSION $ERROR
-            %xmlmap $xmlre);
+            %xmlmap $xmlre $ENCODING);
 use subs qw(time2iso8601 smart_encode bytelength);
 
 # The following is cribbed from SOAP::Lite, tidied up to suit my tastes
@@ -51,6 +51,9 @@ BEGIN
 
     %xmlmap = ( '>' => '&gt;' => '<' => '&lt;' => '&' => '&amp;');
     $xmlre = join('', keys %xmlmap); $xmlre = qr/([$xmlre])/;
+
+    # Default encoding:
+    $ENCODING = 'us-ascii';
 }
 
 require Exporter;
@@ -58,12 +61,12 @@ require Exporter;
 @ISA = qw(Exporter);
 @EXPORT_OK = qw(time2iso8601 smart_encode bytelength
                 RPC_BOOLEAN RPC_INT RPC_I4 RPC_DOUBLE RPC_DATETIME_ISO8601
-                RPC_BASE64 RPC_STRING);
+                RPC_BASE64 RPC_STRING $ENCODING);
 %EXPORT_TAGS = (types => [ qw(RPC_BOOLEAN RPC_INT RPC_I4 RPC_DOUBLE RPC_STRING
                               RPC_DATETIME_ISO8601 RPC_BASE64) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = do { my @r=(q$Revision: 1.30 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.33 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 # Global error string
 $ERROR = '';
@@ -1040,7 +1043,7 @@ sub as_string
 
     $RPC::XML::ERROR = '';
 
-    $text = qq(<?xml version="1.0"?>);
+    $text = qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
     $text .= "<methodCall><methodName>$self->{name}</methodName><params>";
     for (@{$self->{args}})
@@ -1059,7 +1062,7 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    print $fh qq(<?xml version="1.0"?>);
+    print $fh qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
     print $fh "<methodCall><methodName>$self->{name}</methodName><params>";
     for (@{$self->{args}})
@@ -1076,7 +1079,7 @@ sub length
 {
     my $self = shift;
 
-    my $len = 88; # All the constant XML present
+    my $len = 100 + length($RPC::XML::ENCODING); # All the constant XML present
     $len += length($self->{name});
 
     for (@{$self->{args}})
@@ -1186,7 +1189,7 @@ sub as_string
 
     $RPC::XML::ERROR = '';
 
-    $text = qq(<?xml version="1.0"?>);
+    $text = qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
     $text .= '<methodResponse>';
     if ($self->{value}->isa('RPC::XML::fault'))
@@ -1208,7 +1211,7 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    print $fh qq(<?xml version="1.0"?>);
+    print $fh qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
     print $fh '<methodResponse>';
     if ($self->{value}->isa('RPC::XML::fault'))
@@ -1232,7 +1235,7 @@ sub length
 {
     my $self = shift;
 
-    my $len = 54; # All the constant XML present
+    my $len = 66 + length($RPC::XML::ENCODING); # All the constant XML present
 
     # This boilerplate XML is only present when it is NOT a fault
     $len += 47 unless ($self->{value}->isa('RPC::XML::fault'));
@@ -1611,7 +1614,7 @@ specification.
 =head1 LICENSE
 
 This module is licensed under the terms of the Artistic License that covers
-Perl. See <http://language.perl.com/misc/Artistic.html> for the
+Perl. See <http://www.opensource.org/licenses/artistic-license.php> for the
 license itself.
 
 =head1 SEE ALSO

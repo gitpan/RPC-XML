@@ -1,13 +1,13 @@
 # http://module-build.sourceforge.net/META-spec.html
 #XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
 name:         RPC-XML
-version:      0.55
+version:      0.56
 version_from: 
 installdirs:  site
 requires:
     File::Spec:                    0.8
-    LWP:                           0
+    LWP:                           5.801
     XML::Parser:                   2.25
 
 distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.22
+generated_by: ExtUtils::MakeMaker version 6.24
