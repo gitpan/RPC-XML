@@ -9,7 +9,7 @@
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.22 2003/02/06 11:26:49 rjray Exp $
+#   $Id: Server.pm,v 1.24 2003/05/19 07:49:24 rjray Exp $
 #
 #   Description:    This package implements a RPC server as an Apache/mod_perl
 #                   content handler. It uses the RPC::XML::Server package to
@@ -50,7 +50,7 @@ BEGIN
     %Apache::RPC::Server::SERVER_TABLE = ();
 }
 
-$Apache::RPC::Server::VERSION = do { my @r=(q$Revision: 1.22 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$Apache::RPC::Server::VERSION = do { my @r=(q$Revision: 1.24 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 sub version { $Apache::RPC::Server::VERSION }
 
@@ -455,7 +455,7 @@ sub get_server
     my $self     = shift;
     my $r        = shift;
 
-    my ($prefix, $servid);
+    my ($prefix, $servid, $nocomp);
 
     if (ref $r)
     {
@@ -464,12 +464,15 @@ sub get_server
         # If it isn't, create it from the information we have available.
         $prefix = $r->dir_config('RPCOptPrefix') || '';
         $servid = $r->dir_config("${prefix}RpcServer") || '<default>';
+        $nocomp = $r->dir_config('NoCompression') || '';
+
 
         return $Apache::RPC::Server::SERVER_TABLE{$servid} ||
-            $self->new(apache    => $r,
-                       server_id => $servid,
-                       prefix    => $prefix,
-                       path      => $r->location);
+            $self->new(apache      => $r,
+                       server_id   => $servid,
+                       prefix      => $prefix,
+                       no_compress => $nocomp,
+                       path        => $r->location);
     }
     else
     {
@@ -663,14 +666,14 @@ Different locations may share the same server by specifying the name with this
 variable. This is useful for managing varied access schemes, traffic analysis,
 etc.
 
-=item RpcServerDir [DIRECTORY]
+=item RpcMethodDir [DIRECTORY]
 
 This variable specifies directories to be scanned for method C<*.xpl>
 files. To specify more than one directory, separate them with "C<:>" just as
 with any other directory-path expression. All directories are kept (in the
 order specified) as the search path for future loading of methods.
 
-=item RpcServerMethod [FILENAME]
+=item RpcMethod [FILENAME]
 
 This is akin to the directory-specification option above, but only provides a
 single method at a time. It may also have multiple values separated by

@@ -9,7 +9,7 @@
 #
 ###############################################################################
 #
-#   $Id: XML.pm,v 1.26 2003/02/25 09:09:52 rjray Exp $
+#   $Id: XML.pm,v 1.30 2004/04/12 10:14:47 rjray Exp $
 #
 #   Description:    This module provides the core XML <-> RPC conversion and
 #                   structural management.
@@ -27,7 +27,8 @@ package RPC::XML;
 
 use 5.005;
 use strict;
-use vars qw(@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA $VERSION $ERROR);
+use vars qw(@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA $VERSION $ERROR
+            %xmlmap $xmlre);
 use subs qw(time2iso8601 smart_encode bytelength);
 
 # The following is cribbed from SOAP::Lite, tidied up to suit my tastes
@@ -47,6 +48,9 @@ BEGIN
     {
         eval 'sub bytelength { use bytes; length(@_ ? $_[0] : $_) }';
     }
+
+    %xmlmap = ( '>' => '&gt;' => '<' => '&lt;' => '&' => '&amp;');
+    $xmlre = join('', keys %xmlmap); $xmlre = qr/([$xmlre])/;
 }
 
 require Exporter;
@@ -59,7 +63,7 @@ require Exporter;
                               RPC_DATETIME_ISO8601 RPC_BASE64) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = do { my @r=(q$Revision: 1.26 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = do { my @r=(q$Revision: 1.30 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
 
 # Global error string
 $ERROR = '';
@@ -103,7 +107,11 @@ sub smart_encode
 
     @values = map
     {
-        if ($type = ref($_))
+        if (!defined $_)
+        {
+            $type = RPC::XML::string->new('');
+        }
+        elsif ($type = ref($_))
         {
             # Skip any that have already been encoded
             if (UNIVERSAL::isa($_, 'RPC::XML::datatype'))
@@ -284,9 +292,7 @@ sub as_string
 
     return unless ($class = $self->type);
 
-    ($value = $$self) =~ s/&/&amp;/g;
-    $value            =~ s/</&lt;/g;
-    $value            =~ s/>/&gt;/g;
+    ($value = $$self || '') =~ s/$RPC::XML::xmlre/$RPC::XML::xmlmap{$1}/ge;
 
     "<$class>$value</$class>";
 }
@@ -504,11 +510,13 @@ sub value
 sub as_string
 {
     my $self = shift;
+    my $key;
 
     join('',
          '<struct>',
          (map {
-             ("<member><name>$_</name><value>",
+             ($key = $_) =~ s/$RPC::XML::xmlre/$RPC::XML::xmlmap{$1}/ge;
+             ("<member><name>$key</name><value>",
               $self->{$_}->as_string,
               '</value></member>')
          } (keys %$self)),
@@ -520,11 +528,13 @@ sub as_string
 sub serialize
 {
     my ($self, $fh) = @_;
+    my $key;
 
     print $fh '<struct>';
     for (keys %$self)
     {
-        print $fh "<member><name>$_</name><value>";
+        ($key = $_) =~ s/$RPC::XML::xmlre/$RPC::XML::xmlmap{$1}/ge;
+        print $fh "<member><name>$key</name><value>";
         $self->{$_}->serialize($fh);
         print $fh '</value></member>';
     }
@@ -1030,7 +1040,7 @@ sub as_string
 
     $RPC::XML::ERROR = '';
 
-    $text = qq(<?xml version="1.0"?>\n);
+    $text = qq(<?xml version="1.0"?>);
 
     $text .= "<methodCall><methodName>$self->{name}</methodName><params>";
     for (@{$self->{args}})
@@ -1049,7 +1059,7 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    print $fh qq(<?xml version="1.0"?>\n);
+    print $fh qq(<?xml version="1.0"?>);
 
     print $fh "<methodCall><methodName>$self->{name}</methodName><params>";
     for (@{$self->{args}})
@@ -1067,7 +1077,6 @@ sub length
     my $self = shift;
 
     my $len = 88; # All the constant XML present
-    $len += length("\n"); # For OS-dependant cases
     $len += length($self->{name});
 
     for (@{$self->{args}})
@@ -1177,7 +1186,7 @@ sub as_string
 
     $RPC::XML::ERROR = '';
 
-    $text = qq(<?xml version="1.0"?>\n);
+    $text = qq(<?xml version="1.0"?>);
 
     $text .= '<methodResponse>';
     if ($self->{value}->isa('RPC::XML::fault'))
@@ -1199,7 +1208,7 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    print $fh qq(<?xml version="1.0"?>\n);
+    print $fh qq(<?xml version="1.0"?>);
 
     print $fh '<methodResponse>';
     if ($self->{value}->isa('RPC::XML::fault'))
@@ -1224,7 +1233,6 @@ sub length
     my $self = shift;
 
     my $len = 54; # All the constant XML present
-    $len += length("\n"); # OS-dependent issues
 
     # This boilerplate XML is only present when it is NOT a fault
     $len += 47 unless ($self->{value}->isa('RPC::XML::fault'));
@@ -1461,11 +1469,17 @@ reference will contain datatype objects (a shallow rather than deep copy).
 Creates a struct object, the analogy of a hash table in Perl. The keys are
 ordinary strings, and the values must all be data-type objects. The C<value>
 method returns a hash table reference, with native Perl types in the values.
-Key order is not preserved. Key strings are not encoded for special XML
-characters, so the use of such (C<E<lt>>, C<E<gt>>, etc.) is discouraged. If a
-non-null value is passed as an argument to C<value()>, then the hash
-reference will contain the datatype objects rather than native Perl data (a
-shallow vs. deep copy, as with the array type above).
+Key order is not preserved. Key strings are now encoded for special XML
+characters, so the use of such (C<E<lt>>, C<E<gt>>, etc.) should be
+transparent to the user. If a non-null value is passed as an argument to
+C<value()>, then the hash reference will contain the datatype objects rather
+than native Perl data (a shallow vs. deep copy, as with the array type above).
+
+When creating B<RPC::XML::struct> objects, there are two ways to pass the
+content in for the new object: Either an existing hash reference may be passed,
+or a series of key/value pairs may be passed. If a reference is passed, the
+existing data is copied (the reference is not re-blessed), with the values
+encoded into new objects as needed.
 
 =item RPC::XML::fault
 
