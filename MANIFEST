@@ -3,7 +3,6 @@ ChangeLog.xml                  # See my swank new XML format!
 MANIFEST                       # This file
 Makefile.PL                    # MakeMaker skeleton
 README                         # Overview
-README.apache                  # Notes on XML::Parser and Apache
 README.apache2                 # Notes on Apache2 and mod_perl2
 etc/make_method                # Tool to create *.xpl files
 etc/rpc-method.dtd             # DTD for the *.xpl file structure
@@ -49,6 +48,8 @@ methods/status.base
 methods/status.code
 methods/status.help
 t/00_load.t                    # Test suites
+t/01_pod.t
+t/02_pod_coverage.t
 t/10_data.t
 t/11_base64_fh.t
 t/15_serialize.t
