@@ -1,15 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001 by Randy J. Ray <rjray@blackperl.com>,
-# all rights reserved
+# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
 #
-# Copying and distribution are permitted under the terms of the Artistic
-# License as distributed with Perl versions 5.002 and later. See
-# http://www.opensource.org/licenses/artistic-license.php
+# See "LICENSE" in the documentation for licensing and redistribution terms.
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.44 2006/06/04 07:44:41 rjray Exp $
+#   $Id: Server.pm 343 2008-04-09 09:54:36Z rjray $
 #
 #   Description:    This class implements an RPC::XML server, using the core
 #                   XML::RPC transaction code. The server may be created with
@@ -50,7 +47,7 @@
 #                   timeout
 #
 #   Libraries:      AutoLoader
-#                   HTTP::Daemon
+#                   HTTP::Daemon (conditionally)
 #                   HTTP::Response
 #                   HTTP::Status
 #                   URI
@@ -67,7 +64,8 @@ package RPC::XML::Server;
 
 use 5.005;
 use strict;
-use vars qw($VERSION @ISA $INSTANCE $INSTALL_DIR @XPL_PATH);
+use vars qw($VERSION @ISA $INSTANCE $INSTALL_DIR @XPL_PATH
+            $IO_SOCKET_SSL_HACK_NEEDED);
 
 use Carp 'carp';
 use AutoLoader 'AUTOLOAD';
@@ -76,6 +74,12 @@ use File::Spec;
 BEGIN {
     $INSTALL_DIR = (File::Spec->splitpath(__FILE__))[1];
     @XPL_PATH = ($INSTALL_DIR, File::Spec->curdir);
+
+    # For now, I have an ugly hack in place to make the functionality that
+    # runs under HTTP::Daemon/Net::Server work better with SSL. This flag
+    # starts out true, then gets set to false the first time the hack is
+    # applied, so that it doesn't get repeated over and over...
+    $IO_SOCKET_SSL_HACK_NEEDED = 1;
 }
 
 use HTTP::Status;
@@ -86,7 +90,7 @@ use RPC::XML 'bytelength';
 require RPC::XML::Parser;
 require RPC::XML::Procedure;
 
-$VERSION = do { my @r=(q$Revision: 1.44 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = '1.48';
 
 ###############################################################################
 #
@@ -183,7 +187,7 @@ sub new
         # Add some more headers to the default response object for compression.
         # It looks wasteful to keep using the hash key, but it makes it easier
         # to change the string in just one place (above) if I have to.
-        $resp->header(Accept_Encoding  => $self->{__compress})
+        $resp->header(Accept_Encoding => $self->{__compress})
             if $self->{__compress};
         $self->{__compress_thresh} = $args{compress_thresh} || 4096;
         # Yes, I know this is redundant. It's for future expansion/flexibility.
@@ -243,11 +247,12 @@ sub product_tokens
     sprintf "%s/%s", (ref $_[0] || $_[0]), $_[0]->version;
 }
 
-# This fetches/sets the internal "started" timestamp
+# This fetches/sets the internal "started" timestamp. Unlike the other
+# plain-but-mutable attributes, this isn't set to the passed-value but
+# rather a non-null argument sets it from the current time.
 sub started
 {
-    my $self = shift;
-    my $set  = shift || 0;
+    my ($self, $set) = @_;
 
     my $old = $self->{__started} || 0;
     $self->{__started} = time if $set;
@@ -255,48 +260,27 @@ sub started
     $old;
 }
 
-# Fetch/set the compression threshhold
-sub compress_thresh
-{
-    my $self = shift;
-    my $set = shift || 0;
-
-    my $old = $self->{__compress_thresh};
-    $self->{__compress_thresh} = $set if ($set);
-
-    $old;
-}
-
-# Fetch/set the threshhold for spooling messages to files
-sub message_file_thresh
-{
-    my $self = shift;
-    my $set = shift || 0;
-
-    my $old = $self->{__message_file_thresh};
-    $self->{__message_file_thresh} = $set if ($set);
-
-    $old;
-}
-
-# Fetch/set the temp dir to use for spooling large messages to files
-sub message_temp_dir
-{
-    my $self = shift;
-    my $set = shift || 0;
-
-    my $old = $self->{__message_temp_dir};
-    $self->{__message_temp_dir} = $set if ($set);
-
-    $old;
-}
-
 BEGIN
 {
     no strict 'refs';
+    my $method;
+
+    # These are mutable member values for which the logic only differs in
+    # the name of the field to modify:
+    for $method (qw(compress_thresh message_file_thresh message_temp_dir))
+    {
+        *$method = sub {
+            my ($self, $set) = @_;
+
+            my $old = $self->{"__$method"};
+            $self->{"__$method"} = $set if (defined $set);
+
+            $old;
+        }
+    }
 
     # These are immutable member values, so this simple block applies to all
-    for my $method (qw(path host port requests response compress compress_re
+    for $method (qw(path host port requests response compress compress_re
                        parser))
     {
         *$method = sub { shift->{"__$method"} }
@@ -872,7 +856,7 @@ considered a "procedure" or a "method", there may be an extra argument at the
 head of the list. The extra argument is present when the routine being
 dispatched is part of a B<RPC::XML::Method> object. The extra argument is a
 reference to a B<RPC::XML::Server> object (or a subclass thereof). This is
-derived from a hash reference, and will include two special keys:
+derived from a hash reference, and will include these special keys:
 
 =over 4
 
@@ -891,7 +875,30 @@ reference containing one or more datatypes, each a simple string. The first
 of the datatypes specifies the expected return type. The remainder (if any)
 refer to the arguments themselves.
 
+=item peeraddr
+
+This is the address part of a packed B<SOCKADDR_IN> structure, as returned by
+L<Socket/pack_sockaddr_in>, which contains the address of the client that has
+connected and made the current request. This is provided "raw" in case you
+need it. While you could re-create it from C<peerhost>, it is readily
+available in both this server environment and the B<Apache::RPC::Server>
+environment and thus included for convenience.
+
+=item peerhost
+
+This is the address of the remote (client) end of the socket, in C<x.x.x.x>
+(dotted-quad) format. If you wish to look up the clients host-name, you
+can use this to do so or utilize the encoded structure above directly.
+
+=item peerport
+
+Lastly, this is the port of the remote (client) end of the socket, taken
+from the B<SOCKADDR_IN> structure.
+
 =back
+
+Those keys should only be referenced within method code itself, as they are
+not set on the server object outside of that context.
 
 Note that by passing the server object reference first, method-classed
 routines are essentially expected to behave as actual methods of the server
@@ -1057,9 +1064,12 @@ in the signal-setting and signal-catching code in server_loop().
 
 =head1 LICENSE
 
-This module is licensed under the terms of the Artistic License that covers
-Perl. See <http://www.opensource.org/licenses/artistic-license.php> for the
-license.
+This module and the code within are released under the terms of the Artistic
+License 2.0
+(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
+be redistributed under either the Artistic License or the GNU Lesser General
+Public License (LGPL) version 2.1
+(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 
@@ -1362,7 +1372,8 @@ sub process_request
     my $conn = shift;
 
     my ($req, $reqxml, $resp, $respxml, $do_compress, $parser, $com_engine,
-        $length, $read, $buf, $resp_fh, $tmpfile);
+        $length, $read, $buf, $resp_fh, $tmpfile,
+        $peeraddr, $peerhost, $peerport);
 
     my $me = ref($self) . '::process_request';
     unless ($conn and ref($conn))
@@ -1370,8 +1381,21 @@ sub process_request
         $conn = $self->{server}->{client};
         bless $conn, 'HTTP::Daemon::ClientConn';
         ${*$conn}{'httpd_daemon'} = $self;
+
+        if ($IO::Socket::SSL::VERSION and
+            $RPC::XML::Server::IO_SOCKET_SSL_HACK_NEEDED)
+        {
+            no strict 'vars';
+            unshift @HTTP::Daemon::ClientConn::ISA, 'IO::Socket::SSL';
+            $RPC::XML::Server::IO_SOCKET_SSL_HACK_NEEDED = 0;
+        }
     }
 
+    # These will be attached to any and all request objects that are
+    # (successfully) read from $conn.
+    $peeraddr = $conn->peeraddr;
+    $peerport = $conn->peerport;
+    $peerhost = $conn->peerhost;
     while ($req = $conn->get_request('headers only'))
     {
         if ($req->method eq 'HEAD')
@@ -1435,6 +1459,17 @@ sub process_request
                     {
                         $read = sysread($conn, $buf,
                                         ($length < 2048) ? $length : 2048);
+                        unless ($read)
+                        {
+                            # Convert this print to a logging-hook call.
+                            # Umm, when I have real logging hooks, I mean.
+                            # The point is, odds are very good that $conn is
+                            # dead to us now, and I don't want this package
+                            # taking over SIGPIPE as well as the ones it
+                            # already monopolizes.
+                            #print STDERR "Error: Connection Dropped\n";
+                            return undef;
+                        }
                     }
                     $length -= $read;
                     if ($do_compress)
@@ -1474,8 +1509,24 @@ sub process_request
                 }
             }
 
-            # Dispatch will always return a RPC::XML::response
-            $respxml = $self->dispatch($reqxml);
+            # Dispatch will always return a RPC::XML::response.
+            # RT29351: If there was an error from RPC::XML::Parser (such as
+            # a message that didn't conform to spec), then return it directly
+            # as a fault, don't have dispatch() try and handle it.
+            if (ref $reqxml)
+            {
+                # Set localized keys on $self, based on the connection info
+                local $self->{peeraddr} = $peeraddr;
+                local $self->{peerhost} = $peerhost;
+                local $self->{peerport} = $peerport;
+                $respxml = $self->dispatch($reqxml);
+            }
+            else
+            {
+                $respxml = RPC::XML::fault->new(RC_INTERNAL_SERVER_ERROR,
+                                                $reqxml);
+                $respxml = RPC::XML::response->new($respxml);
+            }
 
             # Clone the pre-fab response and set headers
             $resp = $self->response->clone;
@@ -1487,7 +1538,7 @@ sub process_request
                  $self->compress_re))
             {
                 $do_compress = 1;
-                $resp->content_encoding($self->compress);
+                $resp->header(Content_Encoding => $self->compress);
             }
             # Next step, determine the response disposition. If it is above the
             # threshhold for a requested file cut-off, send it to a temp file
@@ -1499,6 +1550,7 @@ sub process_request
                 $tmpfile = $self->message_temp_dir || File::Spec->tmpdir;
                 $tmpfile = File::Spec->catfile($tmpfile,
                                                __PACKAGE__ . $$ . time);
+                $tmpfile =~ s/::/-/g;
                 unless (open($resp_fh, "+> $tmpfile"))
                 {
                     $conn->send_error(RC_INTERNAL_SERVER_ERROR,
@@ -1645,7 +1697,7 @@ sub dispatch
         # reason.
         $reqobj = RPC::XML::request->new(shift(@$xml), @$xml);
     }
-    elsif (UNIVERSAL::isa($xml, 'RPC::XML::request'))
+    elsif (ref($xml) and $xml->isa('RPC::XML::request'))
     {
         $reqobj = $xml;
     }

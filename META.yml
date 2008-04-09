@@ -1,13 +1,17 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         RPC-XML
-version:      0.59
-version_from: 
-installdirs:  site
-requires:
+--- #YAML:1.0
+name:                RPC-XML
+version:             0.60
+abstract:            Data, client and server classes for XML-RPC
+license:             perl
+author:              
+    - Randy J. Ray
+generated_by:        ExtUtils::MakeMaker version 6.44
+distribution_type:   module
+requires:     
     File::Spec:                    0.8
     LWP:                           5.801
+    Test::More:                    0
     XML::Parser:                   2.31
-
-distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.30
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3

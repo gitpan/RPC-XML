@@ -1,0 +1,90 @@
+This file contains message digests of all files listed in MANIFEST,
+signed via the Module::Signature module, version 0.55.
+
+To verify the content in this distribution, first make sure you have
+Module::Signature installed, then type:
+
+    % cpansign -v
+
+It will check each file's integrity, as well as the signature's
+validity.  If "==> Signature verified OK! <==" is not displayed,
+the distribution may already have been compromised, and you should
+not run its Makefile.PL or Build.PL.
+
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+SHA1 6fe498175ba50f9e15de1a88ec3dbdb69e06d319 ChangeLog
+SHA1 6d1aa809a5c2dfd587c232bf8965e3692290930b ChangeLog.xml
+SHA1 41b699bccfd786c450e4692e9e22582d1a1843a2 MANIFEST
+SHA1 59dbc8d0cdc11035bc261ae2cfde8d8a1461b829 META.yml
+SHA1 b4c6bc4bbd6b32b62fa807003a192859d6f8c8c0 Makefile.PL
+SHA1 16e9662adc2ead149d84b049f7a53edef4c599d4 README
+SHA1 d210d832fa02c0f0b79d7c5c65c4a72c3315e230 README.apache2
+SHA1 49d6758504cb1cf0d279eb6639d8ff1bb429c5ef etc/make_method
+SHA1 fcd7b5481af620c338d25ecf907913bac5e5626b etc/rpc-method.dtd
+SHA1 4ce2dae81316825ac0537d58f36548b250aac5fe ex/Makefile
+SHA1 72823d6ce7ceb5ed435f18ed339cc9201880e2f2 ex/README
+SHA1 f59179fc60605e9409889f2947f244f6617c8d6b ex/linux.proc.cpuinfo.base
+SHA1 4e874201ec769948b7be1bc9af392dcb040549ce ex/linux.proc.cpuinfo.code
+SHA1 a95f3432d56cfd8bb74090063248be2df6637ab6 ex/linux.proc.cpuinfo.help
+SHA1 c7f4c28760897c7e2ed81e94445abe22fc663aaf ex/linux.proc.meminfo.base
+SHA1 0d5d3d59e82e2466147878e7ffc543d43535e7c9 ex/linux.proc.meminfo.code
+SHA1 a452d760da2e94baf64cc660c965753ba2b05195 ex/linux.proc.meminfo.help
+SHA1 6bd287841b23e2e6fbaef9130dbe5b61a8207201 lib/Apache/RPC/Server.pm
+SHA1 ef51b75541377fd39e53195156aae75608fbfbdc lib/Apache/RPC/Status.pm
+SHA1 644075447f174b9c5704aece6c8a11988a6feb33 lib/Apache/RPC/status.base
+SHA1 d87580bfe927be390284fd2f3712ba2b5f4173b2 lib/Apache/RPC/status.code
+SHA1 9ef9b17398ef8bd90a84d6b64b7721a9ed7717af lib/Apache/RPC/status.help
+SHA1 0cdbf9363df8f79fe494fbc6abe3e6176b93da65 lib/RPC/XML.pm
+SHA1 35245166b780207bca64e41fe1fcc111e9edbbee lib/RPC/XML/Client.pm
+SHA1 358517173bfa315f4e542a7e021b539945b95ad3 lib/RPC/XML/Function.pm
+SHA1 72cd305bba92d52533e77b6dd539426e1299dcea lib/RPC/XML/Method.pm
+SHA1 c0678fc22c4efc441fbecd981e6582f0e9b5ce34 lib/RPC/XML/Parser.pm
+SHA1 bdbef5cd5f3133d21edf92b6b6d8f7dfcc1e720e lib/RPC/XML/Procedure.pm
+SHA1 1fdc2ba2aa8e06abc3300ca7db7ff82636a9f5bf lib/RPC/XML/Server.pm
+SHA1 3b1b1815be69edabfad34b45f93259aeab6e314e methods/identity.base
+SHA1 dfb493b476b4284b10597ddcfa33c3fbb1f38658 methods/identity.code
+SHA1 2ac37e1c74e4a534e55f20cb53a2023b2eaf80bc methods/identity.help
+SHA1 d78812f3b6ca9cf3debc4c3a26f4ee25faee17b2 methods/introspection.base
+SHA1 c38b37745e718ddfb230db3fef4f9b65da011051 methods/introspection.code
+SHA1 326277bdf86d7edae3357c84e6c25043a31ccf1a methods/introspection.help
+SHA1 2d90840e453adeb5682201c6b596342ab1088dd7 methods/listMethods.base
+SHA1 7bc634eaba1169601fde88baaf5cb03ca5b720b4 methods/listMethods.code
+SHA1 2665072a2f90b0779b84a26fe06d32e26f40d0a0 methods/listMethods.help
+SHA1 2f251ab2bad4681e200a836d28a85bce73fbba16 methods/methodHelp.base
+SHA1 f5d6c49c8d612e5ad4dc6433037b3bc1ec814241 methods/methodHelp.code
+SHA1 4ef5507ff3409e8c4d10e441cc2aafd1928a3389 methods/methodHelp.help
+SHA1 2adae6763c6ee9383cf82c1f18992460f9af7bff methods/methodSignature.base
+SHA1 155846b979f62375f38dd6a042f5e061934a0480 methods/methodSignature.code
+SHA1 ecb669eb5fa3b52c77e60f5441d3ba0778d0f0e2 methods/methodSignature.help
+SHA1 f651990dac9aae48e62fa6457cc89f52529581b7 methods/multicall.base
+SHA1 3027f2708aef58ac2495c4420f97dbd54e9038f3 methods/multicall.code
+SHA1 1868a6aeee193bfaec790733c7e5e3103bdb1a26 methods/multicall.help
+SHA1 644075447f174b9c5704aece6c8a11988a6feb33 methods/status.base
+SHA1 7c1cd809453dbe35446672c1aedac5243e5d344e methods/status.code
+SHA1 2a0e71934ae43a0c53565eb899c1e9ab06a754c9 methods/status.help
+SHA1 f0ccb7f74e6024979e1699fa97b9c98730a8cca9 t/00_load.t
+SHA1 39e050b694fd69bcc730ce425649f529eec9d4f9 t/01_pod.t
+SHA1 6f65d3653614a3d73033aba3da00fd322a15000c t/02_pod_coverage.t
+SHA1 28a5582e01e2bca472f1d5542f6dedbeffbef68a t/10_data.t
+SHA1 ce1bafc9f5bfc98a540bb4b8c94fdcda1a805d16 t/11_base64_fh.t
+SHA1 fdf777af8e23527d58f7ede763386fe8f1d9f7f4 t/15_serialize.t
+SHA1 72daddabf96ea76b444e69667d64f062e37f3ef2 t/20_parser.t
+SHA1 d8ce577d9cc61f6c8395b4509fed147aaec6c9e7 t/30_method.t
+SHA1 aba046bd9810c29b3bb298fe3056f57a2e299cb9 t/40_server.t
+SHA1 bb1a8feb339903fcd58bf86befbd01369376f5d9 t/41_server_hang.t
+SHA1 cc2f20feca69e5d04c2a3fbab93a4cb73d064c71 t/50_client.t
+SHA1 5b1e4afd2f07819ecf8d40799fb6a99b67fd5cad t/60_net_server.t
+SHA1 99b3f1434b7223d74a8ed49e5b67d87d27c2e457 t/meth_bad_1.xpl
+SHA1 14e3dfb6129a9d6f5bfd15bd490daa9010f6bac9 t/meth_bad_2.xpl
+SHA1 99509569e177902aceaac0a7681c421f22a356b6 t/meth_good_1.xpl
+SHA1 8ef631d58ca4a1386dfc0218fd71667260f974ad t/svsm_text.gif
+SHA1 4885272935f9cb673f4a496be973254ab35dbc1c t/util.pl
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.6 (GNU/Linux)
+
+iD8DBQFH/Jnn3Cp33jjp81URAjsGAJ0dsdK8Eqgq1gFpbphtPVGROvlMhgCfXR26
+jbTnJQqe3/sSfXY/unc3UCU=
+=t+V3
+-----END PGP SIGNATURE-----

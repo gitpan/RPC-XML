@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# $Id: 50_client.t 334 2008-03-27 09:31:09Z rjray $
 
 # Test the RPC::XML::Client class
 
@@ -16,7 +17,7 @@ require File::Spec;
 require RPC::XML::Server;
 require RPC::XML::Client;
 
-(undef, $dir, undef) = File::Spec->splitpath($0);
+(undef, $dir, undef) = File::Spec->splitpath(File::Spec->rel2abs($0));
 require File::Spec->catfile($dir, 'util.pl');
 
 # The organization of the test suites is such that we assume anything that
@@ -56,7 +57,7 @@ $cli->combined_handler(undef);
 ok(! ($cli->error_handler() or $cli->fault_handler()));
 
 # Cool so far. Create and spawn the server.
-$srv = RPC::XML::Server->new(port => $port);
+$srv = RPC::XML::Server->new(host => 'localhost', port => $port);
 die "Failed to create server: $srv, stopped" unless (ref $srv);
 $child = start_server($srv);
 
@@ -121,31 +122,31 @@ my ($fh1, $fh2) = (gensym, gensym);
 if ($LWP::VERSION > 5.800)
 {
     if (open($fh1, '<' . File::Spec->catfile($dir, 'svsm_text.gif')) and
-	open($fh2, '<' . File::Spec->catfile($dir, 'svsm_text.gif')))
+        open($fh2, '<' . File::Spec->catfile($dir, 'svsm_text.gif')))
     {
-	# Setting the size threshhold to the size of the GIF will guarantee a
-	# file spool, since we're sending the GIF twice.
-	$cli->message_file_thresh(-s $fh1);
-	$cli->message_temp_dir($dir);
+        # Setting the size threshhold to the size of the GIF will guarantee a
+        # file spool, since we're sending the GIF twice.
+        $cli->message_file_thresh(-s $fh1);
+        $cli->message_temp_dir($dir);
 
-	$cli->uri("http://localhost:$port/");
-	$res = $cli->send_request(cmpImg =>
-				  RPC::XML::base64->new($fh1),
-				  RPC::XML::base64->new($fh2));
-	ok((ref($res) eq 'RPC::XML::boolean') && $res->value);
+        $cli->uri("http://localhost:$port/");
+        $res = $cli->send_request(cmpImg =>
+                                  RPC::XML::base64->new($fh1),
+                                  RPC::XML::base64->new($fh2));
+        ok((ref($res) eq 'RPC::XML::boolean') && $res->value);
 
-	# Force the compression threshhold down, to test that branch
-	$cli->compress_requests(1);
-	$cli->compress_thresh(-s $fh1);
-	$res = $cli->send_request(cmpImg =>
-				  RPC::XML::base64->new($fh1),
-				  RPC::XML::base64->new($fh2));
-	ok((ref($res) eq 'RPC::XML::boolean') && $res->value);
+        # Force the compression threshhold down, to test that branch
+        $cli->compress_requests(1);
+        $cli->compress_thresh(-s $fh1);
+        $res = $cli->send_request(cmpImg =>
+                                  RPC::XML::base64->new($fh1),
+                                  RPC::XML::base64->new($fh2));
+        ok((ref($res) eq 'RPC::XML::boolean') && $res->value);
     }
     else
     {
-	skip("Error opening svsm_text.gif: $!", 0);
-	skip("Error opening svsm_text.gif: $!", 0);
+        skip("Error opening svsm_text.gif: $!", 0);
+        skip("Error opening svsm_text.gif: $!", 0);
     }
 }
 else

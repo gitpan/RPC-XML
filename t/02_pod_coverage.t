@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# $Id: 02_pod_coverage.t 328 2008-03-24 08:14:47Z rjray $
 
 use Test::More;
 

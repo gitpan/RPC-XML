@@ -1,15 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001 by Randy J. Ray <rjray@blackperl.com>,
-# all rights reserved
+# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
 #
-# Copying and distribution are permitted under the terms of the Artistic
-# License as distributed with Perl versions 5.005 and later. See
-# http://www.opensource.org/licenses/artistic-license.php
+# See "LICENSE" in the documentation for licensing and redistribution terms.
 #
 ###############################################################################
 #
-#   $Id: Server.pm,v 1.29 2006/06/30 07:10:29 rjray Exp $
+#   $Id: Server.pm 343 2008-04-09 09:54:36Z rjray $
 #
 #   Description:    This package implements a RPC server as an Apache/mod_perl
 #                   content handler. It uses the RPC::XML::Server package to
@@ -34,6 +31,7 @@ package Apache::RPC::Server;
 use 5.005;
 use strict;
 
+use Socket;
 use File::Spec;
 
 use Apache;
@@ -50,7 +48,7 @@ BEGIN
     %Apache::RPC::Server::SERVER_TABLE = ();
 }
 
-$Apache::RPC::Server::VERSION = do { my @r=(q$Revision: 1.29 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$Apache::RPC::Server::VERSION = '1.30';
 
 sub version { $Apache::RPC::Server::VERSION }
 
@@ -99,7 +97,8 @@ sub handler ($$)
     my $r = shift;
 
     my ($srv, $content, $resp, $hdrs, $hdrs_out, $compress, $length,
-        $do_compress, $com_engine, $parser, $me, $resp_fh);
+        $do_compress, $com_engine, $parser, $me, $resp_fh, $c, $peeraddr,
+        $peerhost, $peerport);
 
     $srv = (ref $class) ? $class : $class->get_server($r);
     $me = (ref($class) || $class) . '::handler';
@@ -176,7 +175,17 @@ sub handler ($$)
 
         # Step 3: Process the request and encode the outgoing response
         # Dispatch will always return a RPC::XML::response object
-        $resp = $srv->dispatch($content);
+        {
+            # We set some short-lifespan localized keys on $srv to let the
+            # methods have access to client connection info
+            $c = $r->connection;
+            ($peerport, $peeraddr) = unpack_sockaddr_in($c->remote_addr);
+            $peerhost = inet_ntoa($peeraddr);
+            local $srv->{peeraddr} = $peeraddr;
+            local $srv->{peerhost} = $peerhost;
+            local $srv->{peerport} = $peerport;
+            $resp = $srv->dispatch($content);
+        }
 
         # Step 4: Form up and send the headers and body of the response
         $r->no_cache(1);
@@ -385,7 +394,7 @@ sub new
     # The default is "no" (don't suppress the default methods), so use || in
     # the evaluation in case neither were set.
     $no_def = $argz{no_default} ? 1 :
-	(($R->dir_config("${prefix}RpcDefMethods") || '') =~ /no/i) ? 1 : 0;
+        (($R->dir_config("${prefix}RpcDefMethods") || '') =~ /no/i) ? 1 : 0;
     unless ($no_def)
     {
         $self->add_default_methods(-except => 'status.xpl');
@@ -869,9 +878,12 @@ specification.
 
 =head1 LICENSE
 
-This module is licensed under the terms of the Artistic License that covers
-Perl. See <http://www.opensource.org/licenses/artistic-license.php> for the
-license itself.
+This module and the code within are released under the terms of the Artistic
+License 2.0
+(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
+be redistributed under either the Artistic License or the GNU Lesser General
+Public License (LGPL) version 2.1
+(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 

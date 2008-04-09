@@ -1,15 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2004 by Randy J. Ray <rjray@blackperl.com>,
-# all rights reserved
+# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
 #
-# Copying and distribution are permitted under the terms of the Artistic
-# License as distributed with Perl versions 5.005 and later. See
-# http://www.opensource.org/licenses/artistic-license.php
+# See "LICENSE" in the documentation for licensing and redistribution terms.
 #
 ###############################################################################
 #
-#   $Id: XML.pm,v 1.36 2006/06/30 07:36:29 rjray Exp $
+#   $Id: XML.pm 343 2008-04-09 09:54:36Z rjray $
 #
 #   Description:    This module provides the core XML <-> RPC conversion and
 #                   structural management.
@@ -49,7 +46,8 @@ BEGIN
         eval 'sub bytelength { use bytes; length(@_ ? $_[0] : $_) }';
     }
 
-    %xmlmap = ( '>' => '&gt;' => '<' => '&lt;' => '&' => '&amp;');
+    %xmlmap = ( '>' => '&gt;',   '<' => '&lt;', '&' => '&amp;',
+                '"' => '&quot;', "'" => '&apos;');
     $xmlre = join('', keys %xmlmap); $xmlre = qr/([$xmlre])/;
 
     # Default encoding:
@@ -69,7 +67,7 @@ require Exporter;
                               RPC_DATETIME_ISO8601 RPC_BASE64) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = do { my @r=(q$Revision: 1.36 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = '1.40';
 
 # Global error string
 $ERROR = '';
@@ -147,8 +145,9 @@ sub time2iso8601
                 }
                 else
                 {
-                    # ??? Don't know what else to do, so skip it for now
-                    next;
+                    # If the user passed in a reference that didn't pass one
+                    # of the above tests, we can't do anything with it:
+                    die "Un-convertable reference: $_, cannot use";
                 }
             }
             # You have to check ints first, because they match the 
@@ -307,6 +306,17 @@ use strict;
 use vars qw(@ISA);
 
 @ISA = qw(RPC::XML::simple_type);
+
+sub as_string
+{
+    my $self = shift;
+
+    return unless (my $class = ref($self));
+    $class =~ s/^.*\://;
+    (my $value = sprintf("%.20f", $$self)) =~ s/0+$//;
+
+    "<$class>$value</$class>";
+}
 
 ###############################################################################
 #
@@ -1675,9 +1685,12 @@ specification.
 
 =head1 LICENSE
 
-This module is licensed under the terms of the Artistic License that covers
-Perl. See L<http://www.opensource.org/licenses/artistic-license.php> for the
-license itself.
+This module and the code within are released under the terms of the Artistic
+License 2.0
+(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
+be redistributed under either the Artistic License or the GNU Lesser General
+Public License (LGPL) version 2.1
+(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 

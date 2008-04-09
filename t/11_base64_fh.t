@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# $Id: 11_base64_fh.t 328 2008-03-24 08:14:47Z rjray $
 
 # Test the usage of RPC::XML::base64 with filehandles
 
@@ -13,7 +14,7 @@ use File::Spec;
 use IO::File;
 use MIME::Base64;
 
-(undef, $dir, undef) = File::Spec->splitpath($0);
+(undef, $dir, undef) = File::Spec->splitpath(File::Spec->rel2abs($0));
 $file = File::Spec->catfile($dir, 'svsm_text.gif');
 $tmpfile = File::Spec->catfile($dir, "__tmp__${$}__");
 

@@ -1,15 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001 by Randy J. Ray <rjray@blackperl.com>,
-# all rights reserved
+# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
 #
-# Copying and distribution are permitted under the terms of the Artistic
-# License as distributed with Perl versions 5.002 and later. See
-# http://www.opensource.org/licenses/artistic-license.php
+# See "LICENSE" in the documentation for licensing and redistribution terms.
 #
 ###############################################################################
 #
-#   $Id: Client.pm,v 1.22 2004/12/09 08:50:17 rjray Exp $
+#   $Id: Client.pm 343 2008-04-09 09:54:36Z rjray $
 #
 #   Description:    This class implements an RPC::XML client, using LWP to
 #                   manage the underlying communication protocols. It relies
@@ -46,7 +43,7 @@ require URI;
 use RPC::XML 'bytelength';
 require RPC::XML::Parser;
 
-$VERSION = do { my @r=(q$Revision: 1.22 $=~/\d+/g); sprintf "%d."."%02d"x$#r,@r };
+$VERSION = '1.24';
 
 ###############################################################################
 #
@@ -235,8 +232,9 @@ sub send_request
         require File::Spec;
         require Symbol;
         # Start by creating a temp-file
-	$tmpfile = $self->message_temp_dir || File::Spec->tmpdir;
-        $tmpfile = File::Spec->catfile($tmpfile, __PACKAGE__ . $$ . time);
+        $tmpfile = $self->message_temp_dir || File::Spec->tmpdir;
+        ($tmpfile = File::Spec->catfile($tmpfile, __PACKAGE__ . $$ . time)) =~
+            s/::/-/g; # Colons in filenames bad on some systems!
         $req_fh = Symbol::gensym();
         return "$me: Error opening $tmpfile: $!"
             unless (open($req_fh, "+> $tmpfile"));
@@ -251,7 +249,7 @@ sub send_request
         # into the primary handle.
         if ($do_compress && ($req->length >= $self->compress_thresh))
         {
-	    my $fh2 = Symbol::gensym();
+            my $fh2 = Symbol::gensym();
             $tmpfile .= '-2';
             return "$me: Error opening $tmpfile: $!"
                 unless (open($fh2, "+> $tmpfile"));
@@ -763,9 +761,12 @@ specification.
 
 =head1 LICENSE
 
-This module is licensed under the terms of the Artistic License that covers
-Perl. See <http://www.opensource.org/licenses/artistic-license.php> for the
-license itself.
+This module and the code within are released under the terms of the Artistic
+License 2.0
+(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
+be redistributed under either the Artistic License or the GNU Lesser General
+Public License (LGPL) version 2.1
+(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 
