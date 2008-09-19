@@ -6,7 +6,7 @@
 #
 ###############################################################################
 #
-#   $Id: XML.pm 356 2008-09-19 09:10:08Z rjray $
+#   $Id: XML.pm 359 2008-09-19 09:22:00Z rjray $
 #
 #   Description:    This module provides the core XML <-> RPC conversion and
 #                   structural management.
@@ -67,7 +67,7 @@ require Exporter;
                               RPC_DATETIME_ISO8601 RPC_BASE64) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.40';
+$VERSION = '1.41';
 
 # Global error string
 $ERROR = '';
