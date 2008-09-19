@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                RPC-XML
-version:             0.61
+version:             0.62
 abstract:            Data, client and server classes for XML-RPC
 license:             perl
 author:              
@@ -8,6 +8,7 @@ author:
 generated_by:        ExtUtils::MakeMaker version 6.44
 distribution_type:   module
 requires:     
+    constant:                      1.03
     File::Spec:                    0.8
     LWP:                           5.801
     Test::More:                    0

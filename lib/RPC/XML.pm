@@ -6,7 +6,7 @@
 #
 ###############################################################################
 #
-#   $Id: XML.pm 350 2008-07-25 09:29:52Z rjray $
+#   $Id: XML.pm 356 2008-09-19 09:10:08Z rjray $
 #
 #   Description:    This module provides the core XML <-> RPC conversion and
 #                   structural management.
@@ -105,10 +105,10 @@ sub time2iso8601
 # This is a (futile?) attempt to provide a "smart" encoding method that will
 # take a Perl scalar and promote it to the appropriate RPC::XML::_type_.
 {
-    my $MaxInt      = 256 ** 4;
-    my $MinInt      = $MaxInt * -1;
-    my $MaxBigInt   = $MaxInt ** 2;
-    my $MinBigInt   = $MaxBigInt * -1;
+    my $MaxInt      = 2147483647;
+    my $MinInt      = -2147483648;
+    my $MaxBigInt   = 9223372036854775807;
+    my $MinBigInt   = -9223372036854775808;
 
     my $MaxDouble   = 1e37;
     my $MinDouble   = $MaxDouble * -1;
@@ -153,7 +153,7 @@ sub time2iso8601
                     die "Un-convertable reference: $_, cannot use";
                 }
             }
-            # You have to check ints first, because they match the 
+            # You have to check ints first, because they match the
             # next pattern too
             # make sure not to encode digits that are larger than i4
             elsif (! $FORCE_STRING_ENCODING and /^[-+]?\d+$/

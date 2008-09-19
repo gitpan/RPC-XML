@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: 40_server.t 352 2008-09-15 10:12:34Z rjray $
+# $Id: 40_server.t 355 2008-09-19 09:06:51Z rjray $
 
 # Test the RPC::XML::Server class
 
@@ -263,7 +263,8 @@ SKIP: {
 
 # Assume $srv is defined, for the rest of the tests (so as to avoid the
 # annoying 'ok(0)' streams like above).
-die "Server allocation failed, cannot continue" unless (ref $srv);
+die "Server allocation failed, cannot continue. Message was: $srv"
+    unless (ref $srv);
 
 kill 'INT', $child;
 
