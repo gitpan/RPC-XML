@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                RPC-XML
-version:             0.63
+version:             0.64
 abstract:            Data, client and server classes for XML-RPC
 license:             perl
 author:              

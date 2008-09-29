@@ -6,7 +6,7 @@
 #
 ###############################################################################
 #
-#   $Id: Parser.pm 343 2008-04-09 09:54:36Z rjray $
+#   $Id: Parser.pm 363 2008-09-29 10:56:48Z rjray $
 #
 #   Description:    This is the RPC::XML::Parser class, a container for the
 #                   XML::Parser class. It was moved here from RPC::XML in
@@ -67,7 +67,7 @@ use constant FAULTENT    => 21;
 use constant FAULTSTART  => 22;
 
 # This is to identify valid types
-use constant VALIDTYPES  => { map { $_, 1 } qw(int i4 string double
+use constant VALIDTYPES  => { map { $_, 1 } qw(int i4 i8 string double
                                                boolean dateTime.iso8601
                                                base64) };
 # This maps XML tags to stack-machine tokens
@@ -97,7 +97,7 @@ require File::Spec;
 
 require RPC::XML;
 
-$VERSION = '1.15';
+$VERSION = '1.16';
 
 ###############################################################################
 #
@@ -308,7 +308,7 @@ sub tag_end
         # Cheaper than the regex that was here, and more locale-portable
         $class = 'datetime_iso8601' if ($class eq 'dateTime.iso8601');
         # Some minimal data-integrity checking
-        if ($class eq 'int' or $class eq 'i4')
+        if ($class eq 'int' or $class eq 'i4' or $class eq 'i8')
         {
             return error($robj, $self, 'Bad integer data read')
                 unless ($cdata =~ /^[-+]?\d+$/);
