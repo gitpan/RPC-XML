@@ -1,12 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2009 Randy J. Ray, all rights reserved
 #
-# See "LICENSE" in the documentation for licensing and redistribution terms.
+# Copying and distribution are permitted under the terms of the Artistic
+# License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
+# the GNU LGPL (http://www.opensource.org/licenses/lgpl-2.1.php).
 #
 ###############################################################################
-#
-#   $Id: Server.pm 343 2008-04-09 09:54:36Z rjray $
 #
 #   Description:    This class implements an RPC::XML server, using the core
 #                   XML::RPC transaction code. The server may be created with
@@ -62,7 +62,7 @@
 
 package RPC::XML::Server;
 
-use 5.005;
+use 5.006001;
 use strict;
 use vars qw($VERSION @ISA $INSTANCE $INSTALL_DIR @XPL_PATH
             $IO_SOCKET_SSL_HACK_NEEDED);
@@ -70,6 +70,15 @@ use vars qw($VERSION @ISA $INSTANCE $INSTALL_DIR @XPL_PATH
 use Carp 'carp';
 use AutoLoader 'AUTOLOAD';
 use File::Spec;
+
+use HTTP::Status;
+use HTTP::Response;
+use URI;
+use Scalar::Util 'blessed';
+
+use RPC::XML;
+use RPC::XML::Parser;
+use RPC::XML::Procedure;
 
 BEGIN {
     $INSTALL_DIR = (File::Spec->splitpath(__FILE__))[1];
@@ -82,15 +91,7 @@ BEGIN {
     $IO_SOCKET_SSL_HACK_NEEDED = 1;
 }
 
-use HTTP::Status;
-require HTTP::Response;
-require URI;
-
-use RPC::XML 'bytelength';
-require RPC::XML::Parser;
-require RPC::XML::Procedure;
-
-$VERSION = '1.48';
+$VERSION = '1.50';
 
 ###############################################################################
 #
@@ -337,7 +338,7 @@ sub add_method
         my $class = 'RPC::XML::' . ucfirst ($meth->{type} || 'method');
         $meth = $class->new($meth);
     }
-    elsif (! UNIVERSAL::isa($meth, 'RPC::XML::Procedure'))
+    elsif (! (blessed $meth and $meth->isa('RPC::XML::Procedure')))
     {
         return "$me: Method argument must be a file name, a hash " .
             'reference or an object derived from RPC::XML::Procedure';
@@ -1055,21 +1056,53 @@ readability of the code took precedence over general efficiency. It is now
 being maintained as production code, but may still have parts that could be
 written more efficiently.
 
+=head1 BUGS
+
+Please report any bugs or feature requests to
+C<bug-rpc-xml at rt.cpan.org>, or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=RPC-XML>. I will be
+notified, and then you'll automatically be notified of progress on
+your bug as I make changes.
+
+=head1 SUPPORT
+
+=over 4
+
+=item * RT: CPAN's request tracker
+
+L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=RPC-XML>
+
+=item * AnnoCPAN: Annotated CPAN documentation
+
+L<http://annocpan.org/dist/RPC-XML>
+
+=item * CPAN Ratings
+
+L<http://cpanratings.perl.org/d/RPC-XML>
+
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/RPC-XML>
+
+=item * Source code on GitHub
+
+L<http://github.com/rjray/rpc-xml/tree/master>
+
+=back
+
+=head1 COPYRIGHT & LICENSE
+
+This file and the code within are copyright (c) 2009 by Randy J. Ray.
+
+Copying and distribution are permitted under the terms of the Artistic
+License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
+the GNU LGPL 2.1 (L<http://www.opensource.org/licenses/lgpl-2.1.php>).
+
 =head1 CREDITS
 
 The B<XML-RPC> standard is Copyright (c) 1998-2001, UserLand Software, Inc.
 See <http://www.xmlrpc.com> for more information about the B<XML-RPC>
-specification. A helpful patch was sent in by Tino Wuensche to fix problems
-in the signal-setting and signal-catching code in server_loop().
-
-=head1 LICENSE
-
-This module and the code within are released under the terms of the Artistic
-License 2.0
-(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
-be redistributed under either the Artistic License or the GNU Lesser General
-Public License (LGPL) version 2.1
-(http://www.opensource.org/licenses/lgpl-license.php).
+specification.
 
 =head1 SEE ALSO
 
@@ -1386,7 +1419,11 @@ sub process_request
             $RPC::XML::Server::IO_SOCKET_SSL_HACK_NEEDED)
         {
             no strict 'vars';
-            unshift @HTTP::Daemon::ClientConn::ISA, 'IO::Socket::SSL';
+            # RT 43019: Don't do this if Socket6/IO::Socket::INET6 is in
+            # effect, as it causes calls to unpack_sockaddr_in6 to break.
+            unshift @HTTP::Daemon::ClientConn::ISA, 'IO::Socket::SSL'
+                unless (defined $Socket6::VERSION or
+                        defined $IO::Socket::INET6::VERSION);
             $RPC::XML::Server::IO_SOCKET_SSL_HACK_NEEDED = 0;
         }
     }
@@ -1428,6 +1465,7 @@ sub process_request
             {
                 # Technically speaking, we're not supposed to honor chunked
                 # transfer-encoding...
+                die "$me: 'chunked' content-encoding not (yet) supported";
             }
             else
             {
@@ -1640,9 +1678,11 @@ sub process_request
             {
                 # Treat the content strictly in-memory
                 $buf = $respxml->as_string;
+                RPC::XML::utf8_downgrade($buf);
                 $buf = Compress::Zlib::compress($buf) if $do_compress;
                 $resp->content($buf);
-                $resp->content_length($respxml->length);
+                # With $buf force-downgraded to octets, length() should work
+                $resp->content_length(length $buf);
             }
 
             $conn->send_response($resp);
@@ -1754,14 +1794,12 @@ sub call
 
     my $meth;
 
-    #
     # Two VERY important notes here: The values in @args are not pre-treated
     # in any way, so not only should the receiver understand what they're
     # getting, there's no signature checking taking place, either.
     #
     # Second, if the normal return value is not distinguishable from a string,
     # then the caller may not recognize if an error occurs.
-    #
 
     return $meth unless ref($meth = $self->get_method($name));
     $meth->call($self, @args);
@@ -1936,16 +1974,14 @@ sub share_methods
     $pkg = __PACKAGE__; # So it can go inside quoted strings
 
     return "$me: First arg not derived from $pkg, cannot share"
-        unless ((ref $src_srv) && (UNIVERSAL::isa($src_srv, $pkg)));
+        unless (blessed $src_srv && $src_srv->isa($pkg));
     return "$me: Must specify at least one method name for sharing"
         unless @names;
 
-    #
-    # Scan @names for any regez objects, and if found insert the matches into
+    # Scan @names for any regex objects, and if found insert the matches into
     # the list.
     #
     # Only do this once:
-    #
     @tmp = keys %{$src_srv->{__method_table}};
     for $tmp (@names)
     {
@@ -1961,12 +1997,10 @@ sub share_methods
     # This has the benefit of trimming any redundancies caused by regex's
     @names = keys %tmp;
 
-    #
     # Note that the method refs are saved until we've verified all of them.
     # If we have to return a failure message, I don't want to leave a half-
     # finished job or have to go back and undo (n-1) additions because of one
     # failure.
-    #
     for (@names)
     {
         $meth = $src_srv->get_method($_);
@@ -2025,16 +2059,14 @@ sub copy_methods
     $pkg = __PACKAGE__; # So it can go inside quoted strings
 
     return "$me: First arg not derived from $pkg, cannot copy"
-        unless ((ref $src_srv) && (UNIVERSAL::isa($src_srv, $pkg)));
+        unless (blessed $src_srv && $src_srv->isa($pkg));
     return "$me: Must specify at least one method name/regex for copying"
         unless @names;
 
-    #
     # Scan @names for any regez objects, and if found insert the matches into
     # the list.
     #
     # Only do this once:
-    #
     @tmp = keys %{$src_srv->{__method_table}};
     for $tmp (@names)
     {
@@ -2050,12 +2082,10 @@ sub copy_methods
     # This has the benefit of trimming any redundancies caused by regex's
     @names = keys %tmp;
 
-    #
     # Note that the method clones are saved until we've verified all of them.
     # If we have to return a failure message, I don't want to leave a half-
     # finished job or have to go back and undo (n-1) additions because of one
     # failure.
-    #
     for (@names)
     {
         $meth = $src_srv->get_method($_);

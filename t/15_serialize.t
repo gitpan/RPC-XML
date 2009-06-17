@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: 15_serialize.t 328 2008-03-24 08:14:47Z rjray $
+# $Id$
 
 # Test the serialization of XML structures to filehandles
 

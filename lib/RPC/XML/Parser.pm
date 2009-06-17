@@ -1,12 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2009 Randy J. Ray, all rights reserved
 #
-# See "LICENSE" in the documentation for licensing and redistribution terms.
+# Copying and distribution are permitted under the terms of the Artistic
+# License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
+# the GNU LGPL (http://www.opensource.org/licenses/lgpl-2.1.php).
 #
 ###############################################################################
-#
-#   $Id: Parser.pm 363 2008-09-29 10:56:48Z rjray $
 #
 #   Description:    This is the RPC::XML::Parser class, a container for the
 #                   XML::Parser class. It was moved here from RPC::XML in
@@ -35,7 +35,7 @@
 
 package RPC::XML::Parser;
 
-use 5.005;
+use 5.006001;
 use strict;
 use vars qw($VERSION @ISA);
 use subs qw(error stack_error new message_init message_end tag_start tag_end
@@ -97,7 +97,7 @@ require File::Spec;
 
 require RPC::XML;
 
-$VERSION = '1.16';
+$VERSION = '1.17';
 
 ###############################################################################
 #
@@ -159,7 +159,9 @@ sub parse
 {
     my ($self, $stream) = @_;
 
-    my $parser = XML::Parser->new(Namespaces => 0, ParseParamEnt => 0,
+    my $parser = XML::Parser->new(Namespaces => 0,
+                                  ParseParamEnt => 0,
+                                  ErrorContext => 1,
                                   Handlers =>
                                   {
                                    Init      => sub { message_init $self, @_ },
@@ -218,7 +220,9 @@ sub tag_start
     {
         push(@{$robj->[M_STACK]}, TAG2TOKEN->{$elem});
     }
-    elsif (VALIDTYPES->{$elem})
+    # Note that the <nil /> element is not in VALIDTYPES, as it is only valid
+    # when $RPC::XML::ALLOW_NIL is true.
+    elsif (VALIDTYPES->{$elem} || ($RPC::XML::ALLOW_NIL && $elem eq 'nil'))
     {
         # All datatypes are represented on the stack by this generic token
         push(@{$robj->[M_STACK]}, DATATYPE);
@@ -301,7 +305,9 @@ sub tag_end
     }
 
     # Decide what to do from here
-    if (VALIDTYPES->{$elem})
+    # Note that the <nil /> element is not in VALIDTYPES, as it is only valid
+    # when $RPC::XML::ALLOW_NIL is true.
+    if (VALIDTYPES->{$elem} || ($elem eq 'nil' && $RPC::XML::ALLOW_NIL))
     {
         # This is the closing tag of one of the data-types.
         $class = $elem;
@@ -319,6 +325,13 @@ sub tag_end
                 unless ($cdata =~
                         # Taken from perldata(1)
                         /^([+-]?)(?=\d|\.\d)\d*(\.\d*)?([Ee]([+-]?\d+))?$/);
+        }
+        elsif ($class eq 'nil')
+        {
+            # We passed the earlier test, so we know that <nil /> is allowed.
+            # By definition though, it must be, well... nil.
+            return error($robj, $self, '<nil /> element must be empty')
+                if ($cdata !~ /^\s*$/);
         }
 
         $class = "RPC::XML::$class";
@@ -453,7 +466,10 @@ sub tag_end
         }
         # Now that we see something ! DATAOBJECT, it needs to be ARRAY
         return stack_error($robj, $self, $elem) unless ($op == ARRAY);
-        $obj = RPC::XML::array->new($list);
+        # Use the special-form of the constructor, for when a listref should
+        # be dereferenced by the constructor (to avoid doing it here and
+        # possibly creating a huge stack):
+        $obj = RPC::XML::array->new(from => $list);
         return error($robj, $self,
                      'Error creating a RPC::XML::array object: ' .
                      $RPC::XML::ERROR)
@@ -641,20 +657,53 @@ readability of the code took precedence over general efficiency. It is now
 being maintained as production code, but may still have parts that could be
 written more efficiently.
 
+=head1 BUGS
+
+Please report any bugs or feature requests to
+C<bug-rpc-xml at rt.cpan.org>, or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=RPC-XML>. I will be
+notified, and then you'll automatically be notified of progress on
+your bug as I make changes.
+
+=head1 SUPPORT
+
+=over 4
+
+=item * RT: CPAN's request tracker
+
+L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=RPC-XML>
+
+=item * AnnoCPAN: Annotated CPAN documentation
+
+L<http://annocpan.org/dist/RPC-XML>
+
+=item * CPAN Ratings
+
+L<http://cpanratings.perl.org/d/RPC-XML>
+
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/RPC-XML>
+
+=item * Source code on GitHub
+
+L<http://github.com/rjray/rpc-xml/tree/master>
+
+=back
+
+=head1 COPYRIGHT & LICENSE
+
+This file and the code within are copyright (c) 2009 by Randy J. Ray.
+
+Copying and distribution are permitted under the terms of the Artistic
+License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
+the GNU LGPL 2.1 (L<http://www.opensource.org/licenses/lgpl-2.1.php>).
+
 =head1 CREDITS
 
 The B<XML-RPC> standard is Copyright (c) 1998-2001, UserLand Software, Inc.
 See <http://www.xmlrpc.com> for more information about the B<XML-RPC>
 specification.
-
-=head1 LICENSE
-
-This module and the code within are released under the terms of the Artistic
-License 2.0
-(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
-be redistributed under either the Artistic License or the GNU Lesser General
-Public License (LGPL) version 2.1
-(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 

@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: 20_parser.t 363 2008-09-29 10:56:48Z rjray $
+# $Id$
 
 # Test the XML::Parser container
 

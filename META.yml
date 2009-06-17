@@ -1,18 +1,28 @@
 --- #YAML:1.0
-name:                RPC-XML
-version:             0.64
-abstract:            Data, client and server classes for XML-RPC
-license:             perl
-author:              
+name:               RPC-XML
+version:            0.65
+abstract:           Data, client and server classes for XML-RPC
+author:
     - Randy J. Ray
-generated_by:        ExtUtils::MakeMaker version 6.44
-distribution_type:   module
-requires:     
-    constant:                      1.03
-    File::Spec:                    0.8
-    LWP:                           5.801
-    Test::More:                    0
-    XML::Parser:                   2.31
+license:            perl
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+build_requires:
+    ExtUtils::MakeMaker:  0
+requires:
+    constant:      1.03
+    File::Spec:    0.8
+    LWP:           5.801
+    perl:          5.006001
+    Scalar::Util:  1.2
+    Test::More:    0
+    XML::Parser:   2.31
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.52
 meta-spec:
-    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
-    version: 1.3
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4

@@ -1,12 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2009 Randy J. Ray, all rights reserved
 #
-# See "LICENSE" in the documentation for licensing and redistribution terms.
+# Copying and distribution are permitted under the terms of the Artistic
+# License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
+# the GNU LGPL (http://www.opensource.org/licenses/lgpl-2.1.php).
 #
 ###############################################################################
-#
-#   $Id: XML.pm 359 2008-09-19 09:22:00Z rjray $
 #
 #   Description:    This module provides the core XML <-> RPC conversion and
 #                   structural management.
@@ -22,29 +22,15 @@
 
 package RPC::XML;
 
-use 5.005;
+use 5.006001;
 use strict;
 use vars qw(@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA $VERSION $ERROR
-            %xmlmap $xmlre $ENCODING $FORCE_STRING_ENCODING);
-use subs qw(time2iso8601 smart_encode bytelength);
+            %xmlmap $xmlre $ENCODING $FORCE_STRING_ENCODING $ALLOW_NIL);
+use subs qw(time2iso8601 smart_encode utf8_downgrade);
 
-# The following is cribbed from SOAP::Lite, tidied up to suit my tastes
 BEGIN
 {
     no strict 'refs';
-
-    eval "use bytes";
-    # Re-worked this passage to continue supporting perl 5.005. It tried to
-    # compile the "use bytes" in the second block even if the conditional never
-    # travelled that path. So, explicit eval strings for everyone.
-    if ($@)
-    {
-        eval 'sub bytelength { length(@_ ? $_[0] : $_) }';
-    }
-    else
-    {
-        eval 'sub bytelength { use bytes; length(@_ ? $_[0] : $_) }';
-    }
 
     %xmlmap = ( '>' => '&gt;',   '<' => '&lt;', '&' => '&amp;',
                 '"' => '&quot;', "'" => '&apos;');
@@ -55,32 +41,43 @@ BEGIN
 
     # force strings?
     $FORCE_STRING_ENCODING = 0;
+
+    # Allow the <nil /> extension?
+    $ALLOW_NIL = 0;
+
+    # Cribbed from the UTF-8 fixes in HTTP::Message, this may be discardable
+    # once full encoding support is in place:
+    *utf8_downgrade = defined(&utf8::downgrade) ?
+        \&utf8::downgrade : sub { };
 }
 
+use Scalar::Util qw(blessed reftype);
 require Exporter;
 
 @ISA = qw(Exporter);
-@EXPORT_OK = qw(time2iso8601 smart_encode bytelength
+@EXPORT_OK = qw(time2iso8601 smart_encode
                 RPC_BOOLEAN RPC_INT RPC_I4 RPC_DOUBLE RPC_DATETIME_ISO8601
-                RPC_BASE64 RPC_STRING $ENCODING $FORCE_STRING_ENCODING);
+                RPC_BASE64 RPC_STRING RPC_NIL
+                $ENCODING $FORCE_STRING_ENCODING $ALLOW_NIL);
 %EXPORT_TAGS = (types => [ qw(RPC_BOOLEAN RPC_INT RPC_I4 RPC_DOUBLE RPC_STRING
-                              RPC_DATETIME_ISO8601 RPC_BASE64) ],
+                              RPC_DATETIME_ISO8601 RPC_BASE64 RPC_NIL) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.41';
+$VERSION = '1.42';
 
 # Global error string
 $ERROR = '';
 
 # All of the RPC_* functions are convenience-encoders
-sub RPC_STRING           ( $ ) { RPC::XML::string->new($_[0]) }
-sub RPC_BOOLEAN          ( $ ) { RPC::XML::boolean->new($_[0]) }
-sub RPC_INT              ( $ ) { RPC::XML::int->new($_[0]) }
-sub RPC_I4               ( $ ) { RPC::XML::i4->new($_[0]) }
-sub RPC_I8               ( $ ) { RPC::XML::i8->new($_[0]) }
-sub RPC_DOUBLE           ( $ ) { RPC::XML::double->new($_[0]) }
-sub RPC_DATETIME_ISO8601 ( $ ) { RPC::XML::datetime_iso8601->new($_[0]) }
-sub RPC_BASE64           ( $ ) { RPC::XML::base64->new($_[0]) }
+sub RPC_STRING           ($)   { RPC::XML::string->new($_[0]) }
+sub RPC_BOOLEAN          ($)   { RPC::XML::boolean->new($_[0]) }
+sub RPC_INT              ($)   { RPC::XML::int->new($_[0]) }
+sub RPC_I4               ($)   { RPC::XML::i4->new($_[0]) }
+sub RPC_I8               ($)   { RPC::XML::i8->new($_[0]) }
+sub RPC_DOUBLE           ($)   { RPC::XML::double->new($_[0]) }
+sub RPC_DATETIME_ISO8601 ($)   { RPC::XML::datetime_iso8601->new($_[0]) }
+sub RPC_BASE64           ($;$) { RPC::XML::base64->new(@_) }
+sub RPC_NIL              ()    { RPC::XML::nil->new() }
 
 # This is a dead-simple ISO8601-from-UNIX-time stringifier. Always expresses
 # time in UTC.
@@ -120,26 +117,32 @@ sub time2iso8601
 
         @values = map
         {
-            if (!defined $_)
+            if (! defined $_)
             {
-                $type = RPC::XML::string->new('');
+                $type = $ALLOW_NIL ?
+                    RPC::XML::nil->new() : RPC::XML::string->new('');
             }
             elsif (ref $_)
             {
                 # Skip any that have already been encoded
-                if (UNIVERSAL::isa($_, 'RPC::XML::datatype'))
+                if (blessed $_ and $_->isa('RPC::XML::datatype'))
                 {
                     $type = $_;
                 }
-                elsif (UNIVERSAL::isa($_, 'HASH'))
+                elsif (reftype($_) eq 'HASH')
                 {
                     $type = RPC::XML::struct->new($_);
                 }
-                elsif (UNIVERSAL::isa($_, 'ARRAY'))
+                elsif (reftype($_) eq 'ARRAY')
                 {
-                    $type = RPC::XML::array->new($_);
+                    # This is a somewhat-ugly approach, but I don't want to
+                    # dereference @$_, but I also want people to be able to
+                    # pass array-refs in to this constructor and have them
+                    # be treated as single elements, as one would expect
+                    # (see RT 35106)
+                    $type = RPC::XML::array->new(from => $_);
                 }
-                elsif (UNIVERSAL::isa($_, 'SCALAR'))
+                elsif (reftype($_) eq 'SCALAR')
                 {
                     # This is a rare excursion into recursion, since the scalar
                     # nature (de-refed from the object, so no longer magic)
@@ -150,7 +153,8 @@ sub time2iso8601
                 {
                     # If the user passed in a reference that didn't pass one
                     # of the above tests, we can't do anything with it:
-                    die "Un-convertable reference: $_, cannot use";
+                    my $type = reftype $_;
+                    die "Un-convertable reference/type: $type, cannot use";
                 }
             }
             # You have to check ints first, because they match the
@@ -184,8 +188,6 @@ sub time2iso8601
 # This is a (mostly) empty class used as a common superclass for simple and
 # complex types, so that their derivatives may be universally type-checked.
 package RPC::XML::datatype;
-use vars qw(@ISA);
-@ISA = ();
 
 sub type { my $class = ref($_[0]) || $_[0]; $class =~ s/.*://; $class }
 sub is_fault { 0 }
@@ -201,9 +203,9 @@ sub is_fault { 0 }
 package RPC::XML::simple_type;
 
 use strict;
-use vars qw(@ISA);
+use base 'RPC::XML::datatype';
 
-@ISA = qw(RPC::XML::datatype);
+use Scalar::Util 'reftype';
 
 # new - a generic constructor that presumes the value being stored is scalar
 sub new
@@ -216,7 +218,7 @@ sub new
     if (ref $value)
     {
         # If it is a scalar reference, just deref
-        if (UNIVERSAL::isa($value, 'SCALAR'))
+        if (reftype($value) eq 'SCALAR')
         {
             $value = $$value;
         }
@@ -257,7 +259,10 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    print $fh $self->as_string;
+    my $str = $self->as_string;
+    RPC::XML::utf8_downgrade($str);
+
+    print $fh $str;
 }
 
 # The switch to serialization instead of in-memory strings means having to
@@ -266,7 +271,8 @@ sub length
 {
     my $self = shift;
 
-    length($self->as_string);
+    RPC::XML::utf8_downgrade(my $str = $self->as_string);
+    length($str);
 }
 
 ###############################################################################
@@ -279,9 +285,7 @@ sub length
 package RPC::XML::int;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 ###############################################################################
 #
@@ -293,9 +297,7 @@ use vars qw(@ISA);
 package RPC::XML::i4;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 ###############################################################################
 #
@@ -307,9 +309,7 @@ use vars qw(@ISA);
 package RPC::XML::i8;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 ###############################################################################
 #
@@ -321,17 +321,14 @@ use vars qw(@ISA);
 package RPC::XML::double;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 sub as_string
 {
     my $self = shift;
 
-    return unless (my $class = ref($self));
-    $class =~ s/^.*\://;
-    (my $value = sprintf("%.20f", $$self)) =~ s/0+$//;
+    return unless (my $class = $self->type);
+    (my $value = sprintf("%.20f", $$self)) =~ s/(\.\d+?)0+$/$1/;
 
     "<$class>$value</$class>";
 }
@@ -346,9 +343,7 @@ sub as_string
 package RPC::XML::string;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 # as_string - return the value as an XML snippet
 sub as_string
@@ -365,14 +360,6 @@ sub as_string
     "<$class>$value</$class>";
 }
 
-# Overloaded from simple_type, so that we can apply bytelength to the body
-sub length
-{
-    my $self = shift;
-
-    RPC::XML::bytelength($self->as_string);
-}
-
 ###############################################################################
 #
 #   Package:        RPC::XML::boolean
@@ -383,9 +370,7 @@ sub length
 package RPC::XML::boolean;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 # This constructor allows any of true, false, yes or no to be specified
 sub new
@@ -423,11 +408,50 @@ sub new
 package RPC::XML::datetime_iso8601;
 
 use strict;
-use vars qw(@ISA);
-
-@ISA = qw(RPC::XML::simple_type);
+use base 'RPC::XML::simple_type';
 
 sub type { 'dateTime.iso8601' };
+
+###############################################################################
+#
+#   Package:        RPC::XML::nil
+#
+#   Description:    The "nil" type-class extension
+#
+###############################################################################
+package RPC::XML::nil;
+
+use strict;
+use base 'RPC::XML::simple_type';
+
+# no value need be passed to this method
+sub new
+{
+    my $class = shift;
+    my $value = undef;
+
+    unless ($RPC::XML::ALLOW_NIL)
+    {
+        $RPC::XML::ERROR = "${class}::new: \$RPC::XML::ALLOW_NIL must be set" .
+            'for RPC::XML::nil objects to be supported';
+        return undef;
+    }
+
+    bless \$value, $class;
+}
+
+# Stringification and serialsation are trivial..
+sub as_string
+{
+    '<nil/>';
+}
+
+sub serialize
+{
+    my ($self, $fh) = @_;
+
+    print $fh $self->as_string; # In case someone sub-classes this
+}
 
 ###############################################################################
 #
@@ -440,22 +464,29 @@ sub type { 'dateTime.iso8601' };
 package RPC::XML::array;
 
 use strict;
-use vars qw(@ISA);
+use base 'RPC::XML::datatype';
 
-@ISA = qw(RPC::XML::datatype);
+use Scalar::Util qw(blessed reftype);
 
 # The constructor for this class mainly needs to sanity-check the value data
 sub new
 {
-    my $class = shift;
-    my @args = (UNIVERSAL::isa($_[0], 'ARRAY')) ? @{$_[0]} : @_;
+    my ($class, @args) = @_;
+
+    # Special-case time: If the args-list has exactly two elements, and the
+    # first element is "from" and the second element is an array-ref (or a
+    # type derived from), then copy the ref's contents into @args.
+    if ((2 == @args) && ($args[0] eq 'from') && (reftype($args[1]) eq 'ARRAY'))
+    {
+        @args = @{$args[1]};
+    }
 
     # First ensure that each argument passed in is itself one of the data-type
     # class instances.
     for (@args)
     {
         $_ = RPC::XML::smart_encode($_)
-            unless (UNIVERSAL::isa($_, 'RPC::XML::datatype'));
+            unless (blessed($_) && $_->isa('RPC::XML::datatype'));
     }
 
     bless \@args, $class;
@@ -534,22 +565,22 @@ sub length
 package RPC::XML::struct;
 
 use strict;
-use vars qw(@ISA);
+use base 'RPC::XML::datatype';
 
-@ISA = qw(RPC::XML::datatype);
+use Scalar::Util qw(blessed reftype);
 
 # The constructor for this class mainly needs to sanity-check the value data
 sub new
 {
     my $class = shift;
-    my %args = (UNIVERSAL::isa($_[0], 'HASH')) ? %{$_[0]} : @_;
+    my %args = (ref($_[0]) and reftype($_[0]) eq 'HASH') ? %{$_[0]} : @_;
 
     # First ensure that each argument passed in is itself one of the data-type
     # class instances.
     for (keys %args)
     {
         $args{$_} = RPC::XML::smart_encode($args{$_})
-            unless (UNIVERSAL::isa($args{$_}, 'RPC::XML::datatype'));
+            unless (blessed $args{$_} && $args{$_}->isa('RPC::XML::datatype'));
     }
 
     bless \%args, $class;
@@ -602,6 +633,7 @@ sub serialize
     for (keys %$self)
     {
         ($key = $_) =~ s/$RPC::XML::xmlre/$RPC::XML::xmlmap{$1}/ge;
+        RPC::XML::utf8_downgrade($key);
         print $fh "<member><name>$key</name><value>";
         $self->{$_}->serialize($fh);
         print $fh '</value></member>';
@@ -615,11 +647,12 @@ sub length
     my $self = shift;
 
     my $len = 17; # <struct></struct>
-    for (keys %$self)
+    for my $key (keys %$self)
     {
         $len += 45; # For all the constant XML presence
-        $len += length($_);
-        $len += $self->{$_}->length;
+        $len += $self->{$key}->length;
+        RPC::XML::utf8_downgrade($key);
+        $len += length($key);
     }
 
     $len;
@@ -637,9 +670,9 @@ sub length
 package RPC::XML::base64;
 
 use strict;
-use vars qw(@ISA);
+use base 'RPC::XML::datatype';
 
-@ISA = qw(RPC::XML::datatype);
+use Scalar::Util 'reftype';
 
 sub new
 {
@@ -655,7 +688,7 @@ sub new
 
     # First, determine if the call sent actual data, a reference to actual
     # data, or an open filehandle.
-    if (ref($value) and UNIVERSAL::isa($value, 'GLOB'))
+    if (ref($value) and reftype($value) eq 'GLOB')
     {
         # This is a seekable filehandle (or acceptable substitute thereof).
         # This assignment increments the ref-count, and prevents destruction
@@ -768,6 +801,8 @@ sub as_string
 
 # If it weren't for Tellme and their damnable WAV files, and ViAir and their
 # half-baked XML-RPC server, I wouldn't have to do any of this...
+#
+# (On the plus side, at least here I don't have to worry about encodings...)
 sub serialize
 {
     my ($self, $fh) = @_;
@@ -859,7 +894,7 @@ sub to_file
 
     my ($fh, $buf, $do_close, $count) = (undef, '', 0, 0);
 
-    if (ref $file and UNIVERSAL::isa($file, 'GLOB'))
+    if (ref $file and retype($file) eq 'GLOB')
     {
         $fh = $file;
     }
@@ -936,9 +971,9 @@ sub to_file
 package RPC::XML::fault;
 
 use strict;
-use vars qw(@ISA);
+use base 'RPC::XML::struct';
 
-@ISA = qw(RPC::XML::struct);
+use Scalar::Util 'blessed';
 
 # For our new(), we only need to ensure that we have the two required members
 sub new
@@ -949,7 +984,7 @@ sub new
     my ($self, %args);
 
     $RPC::XML::ERROR = '';
-    if (ref($args[0]) and UNIVERSAL::isa($args[0], 'RPC::XML::struct'))
+    if (blessed $args[0] and $args[0]->isa('RPC::XML::struct'))
     {
         # Take the keys and values from the struct object as our own
         %args = %{$args[0]->value('shallow')};
@@ -990,15 +1025,22 @@ sub as_string
     '<fault><value>' . $self->SUPER::as_string . '</value></fault>';
 }
 
+# Again, only differs from struct in that it has some extra wrapped around it.
+sub serialize
+{
+    my ($self, $fh) = @_;
+
+    print $fh '<fault><value>';
+    $self->SUPER::serialize($fh);
+    print $fh '</value></fault>';
+}
+
 # Because of the slight diff above, length() has to be different from struct
 sub length
 {
     my $self = shift;
 
-    my $len = 30; # Constant XML content
-    $len += $self->SUPER::length;
-
-    $len;
+    $self->SUPER::length + 30; # For constant XML content
 }
 
 # Convenience methods:
@@ -1026,7 +1068,8 @@ sub is_fault { 1 }
 package RPC::XML::request;
 
 use strict;
-use vars qw(@ISA);
+
+use Scalar::Util 'blessed';
 
 ###############################################################################
 #
@@ -1063,7 +1106,7 @@ sub new
         return undef;
     }
 
-    if (UNIVERSAL::isa($argz[0], 'RPC::XML::request'))
+    if (blessed $argz[0] and $argz[0]->isa('RPC::XML::request'))
     {
         # Maybe this will be a clone operation
     }
@@ -1126,10 +1169,12 @@ sub as_string
 sub serialize
 {
     my ($self, $fh) = @_;
+    my $name = $self->{name};
+    RPC::XML::utf8_downgrade($name);
 
     print $fh qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
-    print $fh "<methodCall><methodName>$self->{name}</methodName><params>";
+    print $fh "<methodCall><methodName>$name</methodName><params>";
     for (@{$self->{args}})
     {
         print $fh '<param><value>';
@@ -1171,7 +1216,8 @@ sub length
 package RPC::XML::response;
 
 use strict;
-use vars qw(@ISA);
+
+use Scalar::Util 'blessed';
 
 ###############################################################################
 #
@@ -1205,9 +1251,9 @@ sub new
         $RPC::XML::ERROR = 'RPC::XML::response::new: One of a datatype, ' .
             'value or a fault object must be specified';
     }
-    elsif (UNIVERSAL::isa($argz[0], 'RPC::XML::response'))
+    elsif (blessed $argz[0] and $argz[0]->isa('RPC::XML::response'))
     {
-        # This will eventually be a clone-operation. For now, just return in
+        # This will eventually be a clone-operation. For now, just return it
         $self = $argz[0];
     }
     elsif (@argz > 1)
@@ -1281,10 +1327,8 @@ sub serialize
     print $fh '<methodResponse>';
     if ($self->{value}->isa('RPC::XML::fault'))
     {
-        # This also bypasses a un-needed call to serialize in the struct
-        # package, since we know by definition that there is no base64 data
-        # in a fault.
-        print $fh $self->{value}->as_string;
+        # A fault lacks the params-boilerplate
+        $self->{value}->serialize($fh);
     }
     else
     {
@@ -1376,25 +1420,17 @@ time value, base-64 data, etc., the program must still explicitly encode it.
 However, this routine will hopefully simplify things a little bit for a
 majority of the usage cases.
 
-=item bytelength([$string])
-
-Returns the length of the string passed in, in bytes rather than characters.
-In Perl prior to 5.6.0 when there was little or no Unicode support, this has
-no difference from the C<length> function. if the B<bytes> pragme is
-available, then the length measured is raw bytes, even when faced with
-multi-byte characters. If no argument is passed in, operates on C<$_>.
-
 =back
 
 In addition to these three, the following "helper" functions are also
 available. They may be imported explicitly, or via a tag of C<:types>:
 
     RPC_BOOLEAN RPC_INT RPC_I4 RPC_I8 RPC_DOUBLE
-    RPC_DATETIME_ISO8601 RPC_BASE64 RPC_STRING
+    RPC_DATETIME_ISO8601 RPC_BASE64 RPC_STRING RPC_NIL
 
-Each creates a data object of the appropriate type from a single value. They
-are merely short-hand for calling the constructors of the data classes
-directly.
+Each creates a data object of the appropriate type from a single value
+(or, in the case of B<RPC_NIL>, from no value). They are merely short-
+hand for calling the constructors of the data classes directly.
 
 All of the above (helpers and the first three functions) may be imported via
 the tag C<:all>.
@@ -1497,6 +1533,16 @@ program may specify any of: C<0>, C<no>, C<false>, C<1>, C<yes>, C<true>.
 
 Creates an instance of the XML-RPC C<dateTime.iso8601> type. The specification
 for ISO 8601 may be found elsewhere. No processing is done to the data.
+
+=item RPC::XML::nil
+
+Creates a C<nil> value. The value returned will always be B<undef>. No value
+should be passed when calling the constructor.
+
+Note that nil is an extension to B<XML-RPC>, which is not supported by
+all implementations. B<$RPC::XML::ALLOW_NIL> must be set to a non-false
+value before objects of this type can be constructed. See
+L</"The nil Datatype">.
 
 =item RPC::XML::base64
 
@@ -1692,7 +1738,25 @@ will do just that.
 
 Defaults to C<false>.
 
+=item $ALLOW_NIL
+
+By default, the XML-RPC C<nil> extension is not supported. Set this to a
+non-false value to allow use of nil values. Data objects that are C<nil>
+are represented as B<undef> by Perl. See L</"The nil Datatype">.
+
 =back
+
+=head1 EXTENSIONS TO XML-RPC
+
+Starting with release 0.64 of this package, some small extensions to the
+core B<XML-RPC> standard have been supported. These are summarized here,
+with additional caveats as appropriate.
+
+=head2 XML Document Encoding
+
+=head2 The i8 Datatype
+
+=head2 The nil Datatype
 
 =head1 CAVEATS
 
@@ -1701,20 +1765,53 @@ readability of the code took precedence over general efficiency. It is now
 being maintained as production code, but may still have parts that could be
 written more efficiently.
 
+=head1 BUGS
+
+Please report any bugs or feature requests to
+C<bug-rpc-xml at rt.cpan.org>, or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=RPC-XML>. I will be
+notified, and then you'll automatically be notified of progress on
+your bug as I make changes.
+
+=head1 SUPPORT
+
+=over 4
+
+=item * RT: CPAN's request tracker
+
+L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=RPC-XML>
+
+=item * AnnoCPAN: Annotated CPAN documentation
+
+L<http://annocpan.org/dist/RPC-XML>
+
+=item * CPAN Ratings
+
+L<http://cpanratings.perl.org/d/RPC-XML>
+
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/RPC-XML>
+
+=item * Source code on GitHub
+
+L<http://github.com/rjray/rpc-xml/tree/master>
+
+=back
+
+=head1 COPYRIGHT & LICENSE
+
+This file and the code within are copyright (c) 2009 by Randy J. Ray.
+
+Copying and distribution are permitted under the terms of the Artistic
+License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
+the GNU LGPL 2.1 (L<http://www.opensource.org/licenses/lgpl-2.1.php>).
+
 =head1 CREDITS
 
 The B<XML-RPC> standard is Copyright (c) 1998-2001, UserLand Software, Inc.
 See L<http://www.xmlrpc.com> for more information about the B<XML-RPC>
 specification.
-
-=head1 LICENSE
-
-This module and the code within are released under the terms of the Artistic
-License 2.0
-(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
-be redistributed under either the Artistic License or the GNU Lesser General
-Public License (LGPL) version 2.1
-(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 

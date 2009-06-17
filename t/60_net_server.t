@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# $Id: 60_net_server.t 352 2008-09-15 10:12:34Z rjray $
+# $Id$
 
 # Test the RPC::XML::Server class with Net::Server rather than HTTP::Daemon
 

@@ -1,12 +1,12 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2008 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2009 Randy J. Ray, all rights reserved
 #
-# See "LICENSE" in the documentation for licensing and redistribution terms.
+# Copying and distribution are permitted under the terms of the Artistic
+# License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
+# the GNU LGPL (http://www.opensource.org/licenses/lgpl-2.1.php).
 #
 ###############################################################################
-#
-#   $Id: Client.pm 343 2008-04-09 09:54:36Z rjray $
 #
 #   Description:    This class implements an RPC::XML client, using LWP to
 #                   manage the underlying communication protocols. It relies
@@ -30,20 +30,21 @@
 
 package RPC::XML::Client;
 
-use 5.005;
+use 5.006001;
 use strict;
 use vars qw($VERSION);
 use subs qw(new simple_request send_request uri useragent request
-            fault_handler error_handler combined_handler);
+            fault_handler error_handler combined_handler timeout);
 
-require LWP::UserAgent;
-require HTTP::Request;
-require URI;
+use LWP::UserAgent;
+use HTTP::Request;
+use URI;
+use Scalar::Util 'blessed';
 
-use RPC::XML 'bytelength';
+use RPC::XML;
 require RPC::XML::Parser;
 
-$VERSION = '1.24';
+$VERSION = '1.27';
 
 ###############################################################################
 #
@@ -202,12 +203,11 @@ sub send_request
 
     $me = ref($self) . '::send_request';
 
-    if (! UNIVERSAL::isa($req, 'RPC::XML::request'))
+    unless (blessed $req and $req->isa('RPC::XML::request'))
     {
         # Assume that $req is the name of the routine to be called
-        $req = RPC::XML::request->new($req, @args);
         return "$me: Error creating RPC::XML::request object: $RPC::XML::ERROR"
-            unless ($req); # $RPC::XML::ERROR is already set
+            unless ($req = RPC::XML::request->new($req, @args));
     }
 
     # Start by setting up the request-clone for using in this instance
@@ -304,9 +304,11 @@ sub send_request
     {
         # Treat the content strictly in-memory
         $content = $req->as_string;
+        RPC::XML::utf8_downgrade($content);
         $content = Compress::Zlib::compress($content) if $do_compress;
         $reqclone->content($content);
-        $reqclone->content_length(bytelength($content));
+        # Because $content has been force-downgraded, length() should work
+        $reqclone->content_length(length($content));
     }
 
     # Content used to be handled as an in-memory string. Now, to avoid eating
@@ -383,6 +385,26 @@ sub send_request
     }
 
     $value->value;
+}
+
+###############################################################################
+#
+#   Sub Name:       timeout
+#
+#   Description:    Get or set the timeout() setting on the underlying
+#                   LWP::UserAgent object.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#                   $time     in      scalar    New timeout value, if passed
+#
+#   Returns:        Return value from LWP::UserAgent->timeout()
+#
+###############################################################################
+sub timeout
+{
+    my $self = shift;
+    $self->useragent->timeout(@_);
 }
 
 ###############################################################################
@@ -687,6 +709,14 @@ client object to a different (protected) location would require calling this
 with new credentials for the new realm (even if the value of C<$realm> is
 identical at both locations).
 
+=item timeout ([INTEGER])
+
+Get or set the current time-out value on the underlying B<LWP::UserAgent>
+object that this object uses for sending requests. This is just a proxy
+through to the method of the same name in the B<LWP::UserAgent> class. The
+return value is the current time-out value (prior to change, if a new value
+is given).
+
 =item message_file_thresh
 
 =item message_temp_dir
@@ -753,20 +783,53 @@ readability of the code took precedence over general efficiency. It is now
 being maintained as production code, but may still have parts that could be
 written more efficiently.
 
+=head1 BUGS
+
+Please report any bugs or feature requests to
+C<bug-rpc-xml at rt.cpan.org>, or through the web interface at
+L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=RPC-XML>. I will be
+notified, and then you'll automatically be notified of progress on
+your bug as I make changes.
+
+=head1 SUPPORT
+
+=over 4
+
+=item * RT: CPAN's request tracker
+
+L<http://rt.cpan.org/NoAuth/Bugs.html?Dist=RPC-XML>
+
+=item * AnnoCPAN: Annotated CPAN documentation
+
+L<http://annocpan.org/dist/RPC-XML>
+
+=item * CPAN Ratings
+
+L<http://cpanratings.perl.org/d/RPC-XML>
+
+=item * Search CPAN
+
+L<http://search.cpan.org/dist/RPC-XML>
+
+=item * Source code on GitHub
+
+L<http://github.com/rjray/rpc-xml/tree/master>
+
+=back
+
+=head1 COPYRIGHT & LICENSE
+
+This file and the code within are copyright (c) 2009 by Randy J. Ray.
+
+Copying and distribution are permitted under the terms of the Artistic
+License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
+the GNU LGPL 2.1 (L<http://www.opensource.org/licenses/lgpl-2.1.php>).
+
 =head1 CREDITS
 
 The B<XML-RPC> standard is Copyright (c) 1998-2001, UserLand Software, Inc.
 See <http://www.xmlrpc.com> for more information about the B<XML-RPC>
 specification.
-
-=head1 LICENSE
-
-This module and the code within are released under the terms of the Artistic
-License 2.0
-(http://www.opensource.org/licenses/artistic-license-2.0.php). This code may
-be redistributed under either the Artistic License or the GNU Lesser General
-Public License (LGPL) version 2.1
-(http://www.opensource.org/licenses/lgpl-license.php).
 
 =head1 SEE ALSO
 
