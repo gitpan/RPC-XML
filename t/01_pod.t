@@ -1,12 +1,33 @@
 #!/usr/bin/perl
-# $Id$
 
+# Test that the syntax of our POD documentation is valid
+use strict;
+BEGIN {
+	$|  = 1;
+	$^W = 1;
+}
+
+my @MODULES = (
+	'Pod::Simple 3.07',
+	'Test::Pod 1.26',
+);
+
+# Don't run tests during end-user installs
 use Test::More;
+unless ( $ENV{AUTOMATED_TESTING} or $ENV{RELEASE_TESTING} ) {
+	plan( skip_all => "Author tests not required for installation" );
+}
 
-eval "use Test::Pod 1.00";
-
-plan skip_all => "Test::Pod 1.00 required for testing POD" if $@;
+# Load the testing modules
+foreach my $MODULE ( @MODULES ) {
+	eval "use $MODULE";
+	if ( $@ ) {
+		$ENV{RELEASE_TESTING}
+		? die( "Failed to load required release-testing module $MODULE" )
+		: plan( skip_all => "$MODULE not available for testing" );
+	}
+}
 
 all_pod_files_ok();
 
-exit;
+1;

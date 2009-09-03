@@ -29,10 +29,10 @@ use vars qw(@EXPORT @EXPORT_OK %EXPORT_TAGS @ISA $VERSION $ERROR
             %xmlmap $xmlre $ENCODING $FORCE_STRING_ENCODING $ALLOW_NIL);
 use subs qw(time2iso8601 smart_encode utf8_downgrade);
 
+## no critic (ProhibitSubroutinePrototypes)
+
 BEGIN
 {
-    no strict 'refs';
-
     %xmlmap = ( '>' => '&gt;',   '<' => '&lt;', '&' => '&amp;',
                 '"' => '&quot;', "'" => '&apos;');
     $xmlre = join('', keys %xmlmap); $xmlre = qr/([$xmlre])/;
@@ -64,7 +64,8 @@ require Exporter;
                               RPC_DATETIME_ISO8601 RPC_BASE64 RPC_NIL) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.43';
+$VERSION = '1.44';
+$VERSION = eval $VERSION; ## no critic
 
 # Global error string
 $ERROR = '';
@@ -114,9 +115,23 @@ sub time2iso8601
     sub smart_encode
     {
         my @values = @_;
-        my $type;
+        my ($type, $seenrefs, @newvalues);
 
-        @values = map
+        # Look for sooper-sekrit pseudo-blessed hashref as first argument.
+        # It means this is a recursive call, and it contains a map of any
+        # references we've already seen.
+        if ((blessed $values[0]) && ($values[0]->isa('RPC::XML::refmap')))
+        {
+            # Peel it off of the list
+            $seenrefs = shift(@values);
+        }
+        else
+        {
+            # Create one just in case we need it
+            $seenrefs = bless {}, 'RPC::XML::refmap';
+        }
+
+        foreach (@values)
         {
             if (! defined $_)
             {
@@ -125,14 +140,34 @@ sub time2iso8601
             }
             elsif (ref $_)
             {
-                # Skip any that have already been encoded
+                # Skip any that we've already seen
+                next if $seenrefs->{$_}++;
+
                 if (blessed $_ and $_->isa('RPC::XML::datatype'))
                 {
+                    # Pass through any that have already been encoded
                     $type = $_;
                 }
                 elsif (reftype($_) eq 'HASH')
                 {
-                    $type = RPC::XML::struct->new($_);
+                    # Per RT 41063, to catch circular refs I can't delegate
+                    # to the struct constructor, I have to create my own
+                    # copy of the hash with locally-recursively-encoded
+                    # values
+                    my %newhash;
+                    for my $key (keys %$_)
+                    {
+                        # Forcing this into a list-context *should* make the
+                        # test be true even if the return value is a hard
+                        # undef. Only if the return value is an empty list
+                        # should this evaluate as false...
+                        if (my @value = smart_encode($seenrefs, $_->{$key}))
+                        {
+                            $newhash{$key} = $value[0];
+                        }
+                    }
+
+                    $type = RPC::XML::struct->new(\%newhash);
                 }
                 elsif (reftype($_) eq 'ARRAY')
                 {
@@ -141,20 +176,23 @@ sub time2iso8601
                     # pass array-refs in to this constructor and have them
                     # be treated as single elements, as one would expect
                     # (see RT 35106)
-                    $type = RPC::XML::array->new(from => $_);
+                    # Per RT 41063, looks like I get to deref $_ after all...
+                    $type =
+                        RPC::XML::array->new(from =>
+                                             [ smart_encode($seenrefs, @$_) ]);
                 }
                 elsif (reftype($_) eq 'SCALAR')
                 {
                     # This is a rare excursion into recursion, since the scalar
                     # nature (de-refed from the object, so no longer magic)
                     # will prevent further recursing.
-                    $type = smart_encode($$_);
+                    $type = smart_encode($seenrefs, $$_);
                 }
                 else
                 {
                     # If the user passed in a reference that didn't pass one
                     # of the above tests, we can't do anything with it:
-                    my $type = reftype $_;
+                    my $type = blessed $_ || reftype $_;
                     die "Un-convertable reference/type: $type, cannot use";
                 }
             }
@@ -179,10 +217,10 @@ sub time2iso8601
                 $type = RPC::XML::string->new($_);
             }
 
-            $type;
-        } @values;
+            push(@newvalues, $type);
+        }
 
-        return (wantarray ? @values : $values[0]);
+        return (wantarray ? @newvalues : $newvalues[0]);
     }
 }
 
@@ -393,7 +431,7 @@ sub new
         $class = ref($class) || $class;
         $RPC::XML::ERROR = "${class}::new: Value must be one of yes, no, " .
             'true, false, 1, 0 (case-insensitive)';
-        return undef;
+        return;
     }
 
     bless \$value, $class;
@@ -435,7 +473,7 @@ sub new
     {
         $RPC::XML::ERROR = "${class}::new: \$RPC::XML::ALLOW_NIL must be set" .
             'for RPC::XML::nil objects to be supported';
-        return undef;
+        return;
     }
 
     bless \$value, $class;
@@ -482,15 +520,9 @@ sub new
         @args = @{$args[1]};
     }
 
-    # First ensure that each argument passed in is itself one of the data-type
+    # Ensure that each argument passed in is itself one of the data-type
     # class instances.
-    for (@args)
-    {
-        $_ = RPC::XML::smart_encode($_)
-            unless (blessed($_) && $_->isa('RPC::XML::datatype'));
-    }
-
-    bless \@args, $class;
+    bless [ RPC::XML::smart_encode(@args) ], $class;
 }
 
 # This became more complex once it was shown that there may be a need to fetch
@@ -576,15 +608,15 @@ sub new
     my $class = shift;
     my %args = (ref($_[0]) and reftype($_[0]) eq 'HASH') ? %{$_[0]} : @_;
 
-    # First ensure that each argument passed in is itself one of the data-type
-    # class instances.
-    for (keys %args)
-    {
-        $args{$_} = RPC::XML::smart_encode($args{$_})
-            unless (blessed $args{$_} && $args{$_}->isa('RPC::XML::datatype'));
-    }
+    # RT 41063: If all the values are datatype objects, either they came in
+    # that way or we've already laundered them through smart_encode(). If there
+    # is even one that isn't, then we have to pass the whole mess to be
+    # encoded.
+    my $ref =
+        (grep(! (blessed($_) && $_->isa('RPC::XML::datatype')), values %args))
+            ? RPC::XML::smart_encode(\%args) : \%args;
 
-    bless \%args, $class;
+    bless $ref, $class;
 }
 
 # This became more complex once it was shown that there may be a need to fetch
@@ -709,7 +741,7 @@ sub new
             $class = ref($class) || $class;
             $RPC::XML::ERROR = "${class}::new: Must be called with non-null " .
                 'data or an open, seekable filehandle';
-            return undef;
+            return;
         }
         # We want in-memory data to always be in the clear, to reduce the tests
         # needed in value(), below.
@@ -903,7 +935,7 @@ sub to_file
     {
         require Symbol;
         $fh = Symbol::gensym();
-        unless (open($fh, "> $file"))
+        unless (open($fh, '>', $file))
         {
             $RPC::XML::ERROR = $!;
             return -1;
@@ -1005,13 +1037,13 @@ sub new
     {
         $class = ref($class) || $class;
         $RPC::XML::ERROR = "${class}::new: Missing required struct fields";
-        return undef;
+        return;
     }
     if (scalar(keys %args) > 2)
     {
         $class = ref($class) || $class;
         $RPC::XML::ERROR = "${class}::new: Extra struct fields not allowed";
-        return undef;
+        return;
     }
 
     $self = $class->SUPER::new(%args);
@@ -1104,7 +1136,7 @@ sub new
     {
         $RPC::XML::ERROR = 'RPC::XML::request::new: At least a method name ' .
             'must be specified';
-        return undef;
+        return;
     }
 
     if (blessed $argz[0] and $argz[0]->isa('RPC::XML::request'))
