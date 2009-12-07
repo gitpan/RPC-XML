@@ -64,7 +64,7 @@ require Exporter;
                               RPC_DATETIME_ISO8601 RPC_BASE64 RPC_NIL) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.44';
+$VERSION = '1.45';
 $VERSION = eval $VERSION; ## no critic
 
 # Global error string
@@ -82,14 +82,15 @@ sub RPC_BASE64           ($;$) { RPC::XML::base64->new(@_) }
 sub RPC_NIL              ()    { RPC::XML::nil->new() }
 
 # This is a dead-simple ISO8601-from-UNIX-time stringifier. Always expresses
-# time in UTC.
+# time in UTC. The format isn't strictly ISO8601, though, as the XML-RPC spec
+# fucked it up.
 sub time2iso8601
 {
     my $time = shift || time;
     my $zone = shift || '';
 
     my @time = gmtime($time);
-    $time = sprintf("%4d%02d%02dT%02d:%02d:%02dZ",
+    $time = sprintf("%4d-%02d-%02dT%02d:%02d:%02dZ",
                     $time[5] + 1900, $time[4] + 1, @time[3, 2, 1, 0]);
     if ($zone)
     {
@@ -143,10 +144,25 @@ sub time2iso8601
                 # Skip any that we've already seen
                 next if $seenrefs->{$_}++;
 
-                if (blessed $_ and $_->isa('RPC::XML::datatype'))
+                if (blessed $_)
                 {
-                    # Pass through any that have already been encoded
-                    $type = $_;
+                    if ($_->isa('RPC::XML::datatype'))
+                    {
+                        # Pass through any that have already been encoded
+                        $type = $_;
+                    }
+                    elsif ($_->isa('DateTime'))
+                    {
+                        $type = RPC::XML::datetime_iso8601
+                            ->new($_->clone->set_time_zone('UTC')->iso8601);
+                    }
+                    else
+                    {
+                        # If the user passed in an object that didn't pass one
+                        # of the above tests, we can't do anything with it:
+                        my $type = blessed $_;
+                        die "Un-convertable reference: $type, cannot use";
+                    }
                 }
                 elsif (reftype($_) eq 'HASH')
                 {
@@ -192,13 +208,12 @@ sub time2iso8601
                 {
                     # If the user passed in a reference that didn't pass one
                     # of the above tests, we can't do anything with it:
-                    my $type = blessed $_ || reftype $_;
-                    die "Un-convertable reference/type: $type, cannot use";
+                    my $type = reftype $_;
+                    die "Un-convertable reference: $type, cannot use";
                 }
             }
             # You have to check ints first, because they match the
             # next pattern too
-            # make sure not to encode digits that are larger than i4
             elsif (! $FORCE_STRING_ENCODING and /^[-+]?\d+$/
                    and $_ > $MinBigInt and $_ < $MaxBigInt)
             {
@@ -211,6 +226,27 @@ sub time2iso8601
                    and $_ > $MinDouble and $_ < $MaxDouble)
             {
                 $type = RPC::XML::double->new($_);
+            }
+            # The XMLRPC spec only allows for the incorrect iso8601 format
+            # without dashes, but dashes are part of the standard so we include
+            # them (DateTime->now->iso8601 includes them).
+            elsif (/
+                       ^           # start
+                       \d{4}       # 4 digit year
+                       -?          # "optional" dash
+                       [01]\d      # month
+                       -?          # optional dash
+                       [0123]\d    # day of month
+                       T           # Yes, "T"
+                       [012]\d:    # hours
+                       [012345]\d: # min
+                       [012345]\d  # seconds
+                       (?:\.\d+)?  # optional fractional seconds
+                       Z?          # optional "Z" to indicate UTC
+                       $           # end
+                   /x)
+            {
+                $type = RPC::XML::datetime_iso8601->new($_);
             }
             else
             {
@@ -449,7 +485,38 @@ package RPC::XML::datetime_iso8601;
 use strict;
 use base 'RPC::XML::simple_type';
 
+use Scalar::Util 'reftype';
+
 sub type { 'dateTime.iso8601' };
+
+# Check the value passed in for sanity, and normalize the string representation
+sub new
+{
+    my ($class, $value) = @_;
+
+    $value = $$value if (ref($value) && reftype($value) eq 'SCALAR');
+
+    if ($value && $value =~ /^(\d{4})-?([01]\d)-?([0123]\d)T
+                             ([012]\d):([012345]\d):([012345]\d)(\.\d+)?
+							 (Z|[-+]\d\d:\d\d)?$/x)
+    {
+        # This is the WRONG way to represent this, but it's the way it is
+        # given in the spec, so assume that other implementations can only
+        # accept this form. Also, this should match the form that time2iso8601
+        # produces.
+        $value = $7 ? "$1-$2-$3T$4:$5:$6$7" : "$1-$2-$3T$4:$5:$6";
+		$value .= $8 if $8;
+    }
+    else
+    {
+        $RPC::XML::ERROR = "${class}::new: Malformed data (" .
+            (defined($value) ? $value : '<undef>') .
+            ') passed as dateTime.iso8601';
+        return;
+    }
+
+    bless \$value, $class;
+}
 
 ###############################################################################
 #
@@ -735,14 +802,7 @@ sub new
         # Not a filehandle. Might be a scalar ref, but other than that it's
         # in-memory data.
         $self->{inmem}++;
-        $self->{value} = ref($value) ? $$value : $value;
-        unless (defined $value and length $value)
-        {
-            $class = ref($class) || $class;
-            $RPC::XML::ERROR = "${class}::new: Must be called with non-null " .
-                'data or an open, seekable filehandle';
-            return;
-        }
+        $self->{value} = ref($value) ? $$value : ($value || '');
         # We want in-memory data to always be in the clear, to reduce the tests
         # needed in value(), below.
         if ($self->{encoded})
@@ -1401,7 +1461,7 @@ RPC::XML - A set of classes for core data, message and XML handling
     $req = RPC::XML::request->new('fetch_prime_factors',
                                   RPC::XML::int->new(985120528));
     ...
-    $resp = RPC::XML::Parser->new()->parse(STREAM);
+    $resp = RPC::XML::ParserFactory->new()->parse(STREAM);
     if (ref($resp))
     {
         return $resp->value->value;
@@ -1527,6 +1587,17 @@ hash reference with specific keys defined.
 The classes themselves are:
 
 =over 4
+
+=item RPC::XML::nil
+
+This represents the "nil" data-type, the XML-RPC equivalent of C<void> in
+C or Java terms. It is only usable as a return type, and signals that a
+function (or method) returns no value.
+
+In order to use this, you must set the global variable C<$ALLOW_NIL> (or
+C<$RPC::XML::ALLOW_NIL> if you don't import it) to a non-false value. If
+this variable is set to a false value, the parser will not recognize a
+C<nil> tag.
 
 =item RPC::XML::int
 
@@ -1779,18 +1850,6 @@ are represented as B<undef> by Perl. See L</"The nil Datatype">.
 
 =back
 
-=head1 EXTENSIONS TO XML-RPC
-
-Starting with release 0.64 of this package, some small extensions to the
-core B<XML-RPC> standard have been supported. These are summarized here,
-with additional caveats as appropriate.
-
-=head2 XML Document Encoding
-
-=head2 The i8 Datatype
-
-=head2 The nil Datatype
-
 =head1 CAVEATS
 
 This began as a reference implementation in which clarity of process and
@@ -1828,7 +1887,7 @@ L<http://search.cpan.org/dist/RPC-XML>
 
 =item * Source code on GitHub
 
-L<http://github.com/rjray/rpc-xml/tree/master>
+L<http://github.com/rjray/rpc-xml>
 
 =back
 

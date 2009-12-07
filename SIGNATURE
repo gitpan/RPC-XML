@@ -1,5 +1,5 @@
 This file contains message digests of all files listed in MANIFEST,
-signed via the Module::Signature module, version 0.55.
+signed via the Module::Signature module, version 0.61.
 
 To verify the content in this distribution, first make sure you have
 Module::Signature installed, then type:
@@ -14,12 +14,12 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 b6dcbbb74f0a0844a980880a6d9429c293d5ee65 ChangeLog
-SHA1 dacab13c23bdfe5e89902c7896c36a84b1afef47 ChangeLog.xml
-SHA1 70380e97e3a7d135c049f4aa752f125898bbee2d MANIFEST
-SHA1 019c4ce53ccabeaa7e8797f1871477efa1a5fa52 META.yml
-SHA1 49cfbf3be4d287d7ca03d6c8066d979b0dc0775f Makefile.PL
-SHA1 abf75c12af9b605da57d60630eeba91b39ea463c README
+SHA1 fb145d741ab0ad6ee6fcbc8e72bd71e63290771f ChangeLog
+SHA1 4f4a59aa2fa2ba478a5968db1051db1eb74cb3c5 ChangeLog.xml
+SHA1 5df8b9467557dac9cecb22abfdbe50608bfe9a99 MANIFEST
+SHA1 24fa0ff648e59946077a0bfb62ffc5a4342a1eb4 META.yml
+SHA1 c3986c430caccce77f7291587f784600166cfaed Makefile.PL
+SHA1 e70cc417a5b6b00c9eb7ecc19e88819bef0c50c9 README
 SHA1 d210d832fa02c0f0b79d7c5c65c4a72c3315e230 README.apache2
 SHA1 297a1d067f33ef14b98256fc306f387814de0e42 etc/make_method
 SHA1 e6a42047da332c81c196ce8f043977d25ccfde8e etc/rpc-method.dtd
@@ -31,20 +31,21 @@ SHA1 a95f3432d56cfd8bb74090063248be2df6637ab6 ex/linux.proc.cpuinfo.help
 SHA1 c7f4c28760897c7e2ed81e94445abe22fc663aaf ex/linux.proc.meminfo.base
 SHA1 0d5d3d59e82e2466147878e7ffc543d43535e7c9 ex/linux.proc.meminfo.code
 SHA1 a452d760da2e94baf64cc660c965753ba2b05195 ex/linux.proc.meminfo.help
-SHA1 af5b115a02602b1fcc58db7d353c2f35e3151cb9 lib/Apache/RPC/Server.pm
-SHA1 07571f739e2a7787c4c83afbdbdc52502d5f58a1 lib/Apache/RPC/Status.pm
+SHA1 18fb4b9490e69d345e00b574f33b810d2d2b1c52 lib/Apache/RPC/Server.pm
+SHA1 603f11bff661595a860940e1e6e53f47306883a3 lib/Apache/RPC/Status.pm
 SHA1 644075447f174b9c5704aece6c8a11988a6feb33 lib/Apache/RPC/status.base
 SHA1 d87580bfe927be390284fd2f3712ba2b5f4173b2 lib/Apache/RPC/status.code
 SHA1 9ef9b17398ef8bd90a84d6b64b7721a9ed7717af lib/Apache/RPC/status.help
-SHA1 3abe761de8ffe21af4281890d02eed1f6eb80af9 lib/RPC/XML.pm
-SHA1 ed82105b92a774ca46483601399d367449350c5e lib/RPC/XML/Client.pm
-SHA1 c51ab9b8b3d17afc3a88d40b1ce0b97edc72dcd4 lib/RPC/XML/Function.pm
-SHA1 b31d652bead6e3da7d642b0444c8e671392e8813 lib/RPC/XML/Method.pm
-SHA1 94d9aaf9436927c88351c0fe368abaa08a6aa384 lib/RPC/XML/Parser.pm
-SHA1 4ebbea5d15fe1090f9608aa5f4a6bcf07da8b3f6 lib/RPC/XML/Parser/XMLParser.pm
-SHA1 28adf942713d57b07c12ed4727d859a9c0337c1b lib/RPC/XML/ParserFactory.pm
-SHA1 caa67377d85c79cf5ac0e5aee48c8c4288da4b2d lib/RPC/XML/Procedure.pm
-SHA1 bc91af849eed4501ea600855ba3808b7caae75fa lib/RPC/XML/Server.pm
+SHA1 59b869ac4bb847badab1ba034513a4e610f4b245 lib/RPC/XML.pm
+SHA1 18ea1c3cc6781cc149ff2b17ffd0b76db5fc1ab7 lib/RPC/XML/Client.pm
+SHA1 944bd25dcb7c8658dfccda84fd1187046c37725c lib/RPC/XML/Function.pm
+SHA1 fb93e4321072b6ee6af1698d10428f0f606ceee2 lib/RPC/XML/Method.pm
+SHA1 622bb6e0e534c151a85c1d7accc3e3812ad448a3 lib/RPC/XML/Parser.pm
+SHA1 ff9019e5443e2f6dea426a47e73335937701cca0 lib/RPC/XML/Parser/XMLLibXML.pm
+SHA1 016483bd428907ea809f3ff1c1bb467132670919 lib/RPC/XML/Parser/XMLParser.pm
+SHA1 23a660b08cc8d83ab3dfd1f8531ef758fda12531 lib/RPC/XML/ParserFactory.pm
+SHA1 4c974112ed6e674365162fc45cb3218ec47e6920 lib/RPC/XML/Procedure.pm
+SHA1 a30e0f5a684294fae3a1309a27e47978ebb43c46 lib/RPC/XML/Server.pm
 SHA1 3b1b1815be69edabfad34b45f93259aeab6e314e methods/identity.base
 SHA1 dfb493b476b4284b10597ddcfa33c3fbb1f38658 methods/identity.code
 SHA1 2ac37e1c74e4a534e55f20cb53a2023b2eaf80bc methods/identity.help
@@ -69,15 +70,17 @@ SHA1 2a0e71934ae43a0c53565eb899c1e9ab06a754c9 methods/status.help
 SHA1 333d72d0e7b8fd6d982181223866353429fe3fcf t/00_load.t
 SHA1 9f09733cd3cb1f3bd151637039e62fd4dcd8e844 t/01_pod.t
 SHA1 9b37e5a8f0cb04269d19c88af47e31dda9156bb9 t/02_pod_coverage.t
-SHA1 ab343d0dab487c66e115f9117d47aeaf5fce216b t/10_data.t
+SHA1 7f267125c5fe24474b192d0cb78be46a1b7b7233 t/10_data.t
 SHA1 8a72f8c5766105c353a87db6616246b98bb9c729 t/11_base64_fh.t
 SHA1 5fef37213eea6345dd528e2a007e94d4cf2292bc t/12_nil.t
 SHA1 0b7f4e29a3b50bd61543434e9ee7cb540dfc0779 t/15_serialize.t
 SHA1 f25a98d7c500e5f1b8638e48775b618a2467ec0e t/20_xml_parser.t
-SHA1 aad1de4bfaa98b7fd25788874a5bc65b0cb3577b t/29_parserfactory.t
+SHA1 0441fa061e294b8ab0dbdaf06d8632a3fa014089 t/21_xml_libxml.t
+SHA1 af11f25e21569be6f2c38bd9bdd79e5019eb9ca5 t/29_parserfactory.t
 SHA1 98122d9c4adcaf2989510864bf0ee7a91c3d7305 t/30_method.t
 SHA1 7e25a7f372fe7142cb98ca949f78885e89d55ffe t/35_namespaces.t
-SHA1 170392bcf7d8d658f92ee3aa336b41dd39d7a6b3 t/40_server.t
+SHA1 7698d9506e02797e34731252d4a75c2499ccb79e t/40_server.t
+SHA1 58d722be7a10276f1f4faf94e6da4ff824ff4ca2 t/40_server_xmllibxml.t
 SHA1 9e3ea90d8280d00d396c504b74a0eab80adba831 t/41_server_hang.t
 SHA1 cf3ff15153258942ba8c4fff58e0a567e1691338 t/50_client.t
 SHA1 159600810136f11de3fa41d160fda57a2f0647a7 t/60_net_server.t
@@ -93,7 +96,7 @@ SHA1 c8ea8ddf621b6231a3693b79fc28288200ab8b8a t/util.pl
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.9 (GNU/Linux)
 
-iEYEARECAAYFAkqf/oMACgkQ3Cp33jjp81VnWQCfQiWBtW9N5DQkT/vYIhxxkk5E
-axUAn2nq/dMcWw8BCcEsYoZFykTyJYhe
-=eQS2
+iEYEARECAAYFAkscoQIACgkQ3Cp33jjp81UyFQCcDnCQt4/jajrbgAWrDLr7m6gs
+1DIAnjpXJ8FgwL1cjMu2XCRTPwSmCBEj
+=Tswk
 -----END PGP SIGNATURE-----

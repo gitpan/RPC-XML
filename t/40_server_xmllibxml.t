@@ -10,7 +10,7 @@ use vars qw($srv $res $bucket $child $parser $xml $req $port $UA @API_METHODS
 use Socket;
 use File::Spec;
 
-use Test::More tests => 61;
+use Test::More tests => 62;
 use LWP::UserAgent;
 use HTTP::Request;
 use Scalar::Util 'blessed';
@@ -36,9 +36,11 @@ sub failmsg { sprintf("%s at line %d", @_) }
 # also means that we cannot use RPC::XML::Client to test it.
 
 # Start with some very basic things, without actually firing up a live server.
-$srv = RPC::XML::Server->new(no_http => 1, no_default => 1);
+$srv = RPC::XML::Server->new(parser => [ class => 'XML::LibXML' ],
+                             no_http => 1, no_default => 1);
 
 isa_ok($srv, 'RPC::XML::Server', '$srv<1>');
+isa_ok($srv->parser, 'RPC::XML::Parser::XMLLibXML', '$srv<1> parser');
 # Suppress "used only once" warning
 $_ = $RPC::XML::Server::VERSION;
 is($srv->version, $RPC::XML::Server::VERSION,
@@ -56,6 +58,7 @@ undef $srv;
 die "No usable port found between 9000 and 10000, skipping"
     if (($port = find_port) == -1);
 $srv = RPC::XML::Server->new(no_default => 1,
+                             parser => [ class => 'XML::LibXML' ],
                              host => 'localhost', port => $port);
 isa_ok($srv, 'RPC::XML::Server', '$srv<2>');
 # Test the URL the server uses. Allow for "localhost", "localhost.localdomain"
@@ -218,7 +221,7 @@ SKIP: {
         skip "Response content did not parse, cannot test", 2
             unless (ref $res and $res->isa('RPC::XML::response'));
         ok($res->is_fault, 'RT29351 live req: parsed $res is a fault');
-        like($res->value->value->{faultString}, qr/Stack corruption/,
+        like($res->value->value->{faultString}, qr/Extra content/,
              'RT29351 live request: correct faultString');
     }
 }
@@ -232,7 +235,8 @@ undef $srv;
 undef $req;
 die "No usable port found between 9000 and 10000, skipping"
     if (($port = find_port) == -1);
-$srv = RPC::XML::Server->new(host => 'localhost', port => $port);
+$srv = RPC::XML::Server->new(parser => [ class => 'XML::LibXML' ],
+                             host => 'localhost', port => $port);
 
 # Did it create OK, with the requirement of loading the XPL code?
 isa_ok($srv, 'RPC::XML::Server', '$srv<3> (with default methods)');

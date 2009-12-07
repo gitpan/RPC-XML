@@ -92,8 +92,6 @@ use constant M_BASE64_TEMP_DIR      => 3;
 use constant M_SPOOLING_BASE64_DATA => 4;
 
 use XML::Parser;
-require File::Spec;
-require File::Temp;
 
 require RPC::XML;
 
@@ -233,6 +231,8 @@ sub tag_start
         {
             return unless ($robj->[M_BASE64_TO_FH]);
             require Symbol;
+			require File::Spec;
+			require File::Temp;
             my ($fh, $tmpdir) = (Symbol::gensym(), File::Spec->tmpdir);
 
             $tmpdir = $robj->[M_BASE64_TEMP_DIR]
@@ -679,7 +679,7 @@ L<http://search.cpan.org/dist/RPC-XML>
 
 =item * Source code on GitHub
 
-L<http://github.com/rjray/rpc-xml/tree/master>
+L<http://github.com/rjray/rpc-xml>
 
 =back
 

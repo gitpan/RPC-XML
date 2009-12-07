@@ -53,7 +53,7 @@ use Scalar::Util 'blessed';
 
 use RPC::XML 'smart_encode';
 
-$VERSION = '1.19';
+$VERSION = '1.20';
 $VERSION = eval $VERSION;    ## no critic
 
 ###############################################################################
@@ -661,7 +661,7 @@ L<http://search.cpan.org/dist/RPC-XML>
 
 =item * Source code on GitHub
 
-L<http://github.com/rjray/rpc-xml/tree/master>
+L<http://github.com/rjray/rpc-xml>
 
 =back
 
@@ -1066,10 +1066,9 @@ sub call
     # transform Perl-level error/failure into such an object
     if ($@)
     {
-        return (blessed $@ and $@->isa('RPC::XML::fault'))
-            ? $@
-            : $srv->server_fault->(
-            execerror => "Method $name returned error: $@");
+        return (blessed $@ and $@->isa('RPC::XML::fault')) ?
+            $@ : $srv->server_fault(execerror =>
+                                    "Method $name returned error: $@");
     }
 
     $self->{called}++ unless $noinc;
@@ -1085,8 +1084,8 @@ sub call
         }
         else
         {
-			# We checked that this was valid earlier, so no need for further
-			# tests here.
+            # We checked that this was valid earlier, so no need for further
+            # tests here.
             $response = "RPC::XML::$resptype"->new($response);
         }
     }
