@@ -14,12 +14,12 @@ not run its Makefile.PL or Build.PL.
 -----BEGIN PGP SIGNED MESSAGE-----
 Hash: SHA1
 
-SHA1 fb145d741ab0ad6ee6fcbc8e72bd71e63290771f ChangeLog
-SHA1 4f4a59aa2fa2ba478a5968db1051db1eb74cb3c5 ChangeLog.xml
-SHA1 5df8b9467557dac9cecb22abfdbe50608bfe9a99 MANIFEST
-SHA1 24fa0ff648e59946077a0bfb62ffc5a4342a1eb4 META.yml
-SHA1 c3986c430caccce77f7291587f784600166cfaed Makefile.PL
-SHA1 e70cc417a5b6b00c9eb7ecc19e88819bef0c50c9 README
+SHA1 26b7dbcfa48b2a02db8ad18a081de35a18c6a287 ChangeLog
+SHA1 6494ed15f54701eb1eb74c3111286cbc1a3c5f82 ChangeLog.xml
+SHA1 44dfa563fecc6bfd8846d9d801d06df7afa10682 MANIFEST
+SHA1 440700b0523cffd47e5397afd0d30a2168a0860d META.yml
+SHA1 5d08a5dcef59ecfe1c1bc70d1597a5529b7ada87 Makefile.PL
+SHA1 0ff743e294642474df4b0e03ae1e308069bfe6c6 README
 SHA1 d210d832fa02c0f0b79d7c5c65c4a72c3315e230 README.apache2
 SHA1 297a1d067f33ef14b98256fc306f387814de0e42 etc/make_method
 SHA1 e6a42047da332c81c196ce8f043977d25ccfde8e etc/rpc-method.dtd
@@ -36,7 +36,7 @@ SHA1 603f11bff661595a860940e1e6e53f47306883a3 lib/Apache/RPC/Status.pm
 SHA1 644075447f174b9c5704aece6c8a11988a6feb33 lib/Apache/RPC/status.base
 SHA1 d87580bfe927be390284fd2f3712ba2b5f4173b2 lib/Apache/RPC/status.code
 SHA1 9ef9b17398ef8bd90a84d6b64b7721a9ed7717af lib/Apache/RPC/status.help
-SHA1 59b869ac4bb847badab1ba034513a4e610f4b245 lib/RPC/XML.pm
+SHA1 cbcc97c25a1abba16ce56c2325b60c71a69cd80d lib/RPC/XML.pm
 SHA1 18ea1c3cc6781cc149ff2b17ffd0b76db5fc1ab7 lib/RPC/XML/Client.pm
 SHA1 944bd25dcb7c8658dfccda84fd1187046c37725c lib/RPC/XML/Function.pm
 SHA1 fb93e4321072b6ee6af1698d10428f0f606ceee2 lib/RPC/XML/Method.pm
@@ -68,14 +68,13 @@ SHA1 644075447f174b9c5704aece6c8a11988a6feb33 methods/status.base
 SHA1 7c1cd809453dbe35446672c1aedac5243e5d344e methods/status.code
 SHA1 2a0e71934ae43a0c53565eb899c1e9ab06a754c9 methods/status.help
 SHA1 333d72d0e7b8fd6d982181223866353429fe3fcf t/00_load.t
-SHA1 9f09733cd3cb1f3bd151637039e62fd4dcd8e844 t/01_pod.t
-SHA1 9b37e5a8f0cb04269d19c88af47e31dda9156bb9 t/02_pod_coverage.t
 SHA1 7f267125c5fe24474b192d0cb78be46a1b7b7233 t/10_data.t
 SHA1 8a72f8c5766105c353a87db6616246b98bb9c729 t/11_base64_fh.t
 SHA1 5fef37213eea6345dd528e2a007e94d4cf2292bc t/12_nil.t
 SHA1 0b7f4e29a3b50bd61543434e9ee7cb540dfc0779 t/15_serialize.t
 SHA1 f25a98d7c500e5f1b8638e48775b618a2467ec0e t/20_xml_parser.t
 SHA1 0441fa061e294b8ab0dbdaf06d8632a3fa014089 t/21_xml_libxml.t
+SHA1 c44cf8cca7ca4b0823f4bbba33435b364bca9673 t/28_parser_bugs_50013.t
 SHA1 af11f25e21569be6f2c38bd9bdd79e5019eb9ca5 t/29_parserfactory.t
 SHA1 98122d9c4adcaf2989510864bf0ee7a91c3d7305 t/30_method.t
 SHA1 7e25a7f372fe7142cb98ca949f78885e89d55ffe t/35_namespaces.t
@@ -93,10 +92,15 @@ SHA1 14a969cc89b23d6daad963f716d64fef23dd819c t/namespace2.xpl
 SHA1 f50c01dd06bfa60f0c2bc12143afb35af09fcdad t/namespace3.xpl
 SHA1 8ef631d58ca4a1386dfc0218fd71667260f974ad t/svsm_text.gif
 SHA1 c8ea8ddf621b6231a3693b79fc28288200ab8b8a t/util.pl
+SHA1 98c3071597c93d25c050f4a4fcb49ef1d5189d9f xt/01_pod.t
+SHA1 d9f203f396d164b57ac9148086b4c4f89a72a095 xt/02_pod_coverage.t
+SHA1 b694fe5b198b927055a26d84f55040b92ed6404e xt/03_meta.t
+SHA1 909c27aceb157aee68b6468f9c28985c6a5bcb04 xt/04_minimumversion.t
+SHA1 95384e1ac89e1505af671b7016ca6a837cc124da xt/05_critic.t
 -----BEGIN PGP SIGNATURE-----
 Version: GnuPG v1.4.9 (GNU/Linux)
 
-iEYEARECAAYFAkscoQIACgkQ3Cp33jjp81UyFQCcDnCQt4/jajrbgAWrDLr7m6gs
-1DIAnjpXJ8FgwL1cjMu2XCRTPwSmCBEj
-=Tswk
+iEYEARECAAYFAksd0TUACgkQ3Cp33jjp81UDiwCeMzow7oJz+nkDbAhsuRTny800
+O/cAn38qD7hfEFfoHKsi9PLDUjbwg7gn
+=0tUV
 -----END PGP SIGNATURE-----
