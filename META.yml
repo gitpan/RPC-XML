@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               RPC-XML
-version:            0.71
+version:            0.72
 abstract:           Data, client and server classes for XML-RPC
 author:
     - Randy J. Ray
@@ -17,6 +17,7 @@ requires:
     perl:          5.006001
     Scalar::Util:  1.19
     Test::More:    0
+    XML::LibXML:   1.70
     XML::Parser:   2.31
 resources:
     bugtracker:  http://rt.cpan.org/Public/Dist/Display.html?Name=RPC-XML
