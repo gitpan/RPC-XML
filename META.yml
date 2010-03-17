@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               RPC-XML
-version:            0.72
+version:            0.73
 abstract:           Data, client and server classes for XML-RPC
 author:
     - Randy J. Ray
@@ -13,11 +13,10 @@ build_requires:
 requires:
     constant:      1.03
     File::Spec:    0.8
-    LWP:           5.801
+    LWP:           5.834
     perl:          5.006001
     Scalar::Util:  1.19
     Test::More:    0
-    XML::LibXML:   1.70
     XML::Parser:   2.31
 resources:
     bugtracker:  http://rt.cpan.org/Public/Dist/Display.html?Name=RPC-XML
@@ -27,7 +26,9 @@ no_index:
     directory:
         - t
         - inc
-generated_by:       ExtUtils::MakeMaker version 6.54
+generated_by:       ExtUtils::MakeMaker version 6.56
 meta-spec:
     url:      http://module-build.sourceforge.net/META-spec-v1.4.html
     version:  1.4
+recommends:
+    XML::LibXML:  1.70
