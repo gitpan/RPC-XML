@@ -135,8 +135,8 @@ sub new ## no critic (ProhibitExcessComplexity)
 
     my (
         $self,     $http,        $resp, $host,
-        $port,     $queue,       $path, $URI,
-        $srv_name, $srv_version, $timeout
+        $port,     $queue,       $URI,  $srv_version,
+        $srv_name
     );
 
     $class = ref($class) || $class;
@@ -166,7 +166,7 @@ sub new ## no critic (ProhibitExcessComplexity)
         );
         if (! $http)
         {
-            return "${class}::new: Unable to create HTTP::Daemon object";
+            return "${class}::new: Unable to create HTTP::Daemon object: $@";
         }
         $URI              = URI->new($http->url);
         $self->{__host}   = $URI->host;
@@ -1015,6 +1015,11 @@ can use this to do so or utilize the encoded structure above directly.
 
 Lastly, this is the port of the remote (client) end of the socket, taken
 from the B<SOCKADDR_IN> structure.
+
+=item request
+
+The L<HTTP::Request> object for this request. Can be used to read HTTP headers
+sent by the client (C<X-Forwarded-For> for your access checks, for example).
 
 =back
 
@@ -1878,6 +1883,7 @@ sub process_request ## no critic (ProhibitExcessComplexity)
                 local $self->{peeraddr} = $peeraddr;
                 local $self->{peerhost} = $peerhost;
                 local $self->{peerport} = $peerport;
+                local $self->{request}  = $req;
                 $respxml = $self->dispatch($reqxml);
             }
             else

@@ -73,7 +73,7 @@ use constant FAULTSTART  => 22;
 # This is to identify valid types
 use constant VALIDTYPES  => { map { ($_, 1) } qw(int i4 i8 string double
                                                  boolean dateTime.iso8601
-                                                 base64) };
+                                                 base64 nil) };
 # This maps XML tags to stack-machine tokens
 use constant TAG2TOKEN   => { methodCall        => METHOD,
                               methodResponse    => RESPONSE,
@@ -98,7 +98,7 @@ use XML::Parser;
 
 require RPC::XML;
 
-$VERSION = '1.20';
+$VERSION = '1.22';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 ###############################################################################
@@ -175,7 +175,10 @@ sub parse
 
     # If there is no stream given, then create an incremental parser handle
     # and return it.
-    if (! $stream)
+    # RT58323: It's not enough to just test $stream, I have to check
+    # defined-ness. A 0 or null-string should yield an error, not a push-parser
+    # instance.
+    if (! defined $stream)
     {
         return $parser->parse_start();
     }
@@ -203,10 +206,11 @@ sub message_init
     return $self;
 }
 
-# This is called when the parsing process is complete
+# This is called when the parsing process is complete. There is a second arg,
+# $self, that is passed but not used. So it isn't declared for now.
 sub final
 {
-    my ($robj, $self) = @_;
+    my ($robj) = @_;
 
     # Look at the top-most marker, it'll need to be one of the end cases
     my $marker = pop @{$robj->[M_STACK]};
@@ -221,10 +225,13 @@ sub final
     return $retval;
 }
 
-# This gets called each time an opening tag is parsed
+# This gets called each time an opening tag is parsed. In addition to the three
+# args here, any attributes are passed in hash form as well. But the XML-RPC
+# spec uses no attributes, so we aren't declaring them here as the list will
+# (or should, at least) always be empty.
 sub tag_start
 {
-    my ($robj, $self, $elem, %attr) = @_;
+    my ($robj, $self, $elem) = @_;
 
     $robj->[M_CDATA] = [];
     return if ($elem eq 'data');
@@ -233,9 +240,7 @@ sub tag_start
     {
         push @{$robj->[M_STACK]}, TAG2TOKEN->{$elem};
     }
-    # Note that the <nil /> element is not in VALIDTYPES, as it is only valid
-    # when $RPC::XML::ALLOW_NIL is true.
-    elsif (VALIDTYPES->{$elem} || ($RPC::XML::ALLOW_NIL && $elem eq 'nil'))
+    elsif (VALIDTYPES->{$elem})
     {
         # All datatypes are represented on the stack by this generic token
         push @{$robj->[M_STACK]}, DATATYPE;
@@ -329,10 +334,7 @@ sub tag_end ## no critic (ProhibitExcessComplexity)
     }
 
     # Decide what to do from here
-    # Note that the <nil /> element is not in VALIDTYPES, as it is only valid
-    # when $RPC::XML::ALLOW_NIL is true.
-    if (VALIDTYPES->{$elem} || ## no critic (ProhibitCascadingIfElse)
-        ($elem eq 'nil' && $RPC::XML::ALLOW_NIL))
+    if (VALIDTYPES->{$elem}) ## no critic (ProhibitCascadingIfElse)
     {
         # This is the closing tag of one of the data-types.
         $class = $elem;
@@ -360,7 +362,7 @@ sub tag_end ## no critic (ProhibitExcessComplexity)
         }
         elsif ($class eq 'nil')
         {
-            # We passed the earlier test, so we know that <nil /> is allowed.
+            # We now allow parsing of <nil/> at all times.
             # By definition though, it must be, well... nil.
             if ($cdata !~ /^\s*$/)
             {
@@ -370,7 +372,7 @@ sub tag_end ## no critic (ProhibitExcessComplexity)
 
         $class = "RPC::XML::$class";
         # The string at the end is only seen by the RPC::XML::base64 class
-        $obj = $class->new($cdata, 'base64 already encoded');
+        $obj = $class->new($cdata, 'base64 is encoded, nil is allowed');
         if (! $obj)
         {
             return error($robj, $self, 'Error instantiating data object: ' .

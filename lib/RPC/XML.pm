@@ -61,7 +61,7 @@ BEGIN
                               RPC_DATETIME_ISO8601 RPC_BASE64 RPC_NIL) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.50';
+$VERSION = '1.52';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 # Global error string
@@ -125,7 +125,7 @@ sub time2iso8601
     my $zone = shift || q{};
 
     my @time = gmtime $time;
-    $time = sprintf '%4d-%02d-%02dT%02d:%02d:%02dZ',
+    $time = sprintf '%4d%02d%02dT%02d:%02d:%02dZ',
                     $time[5] + 1900, $time[4] + 1, @time[3, 2, 1, 0];
     if ($zone)
     {
@@ -246,14 +246,20 @@ sub time2iso8601
                 }
             }
             # You have to check ints first, because they match the
-            # next pattern too
+            # next pattern (for doubles) too
             elsif (! $FORCE_STRING_ENCODING &&
                    /^[-+]?\d+$/ &&
-                   $_ > $MIN_BIG_INT &&
-                   $_ < $MAX_BIG_INT)
+                   $_ >= $MIN_BIG_INT &&
+                   $_ <= $MAX_BIG_INT)
             {
-                $type = (abs($_) > $MAX_INT) ? 'RPC::XML::i8' : 'RPC::XML::int';
-                $type = $type->new($_);
+                if (($_ > $MAX_INT) || ($_ < $MIN_INT))
+                {
+                    $type = RPC::XML::i8->new($_);
+                }
+                else
+                {
+                    $type = RPC::XML::int->new($_);
+                }
             }
             # Pattern taken from perldata(1)
             elsif (! $FORCE_STRING_ENCODING &&
@@ -265,7 +271,8 @@ sub time2iso8601
             }
             # The XMLRPC spec only allows for the incorrect iso8601 format
             # without dashes, but dashes are part of the standard so we include
-            # them (DateTime->now->iso8601 includes them).
+            # them (DateTime->now->iso8601 includes them). Note that the actual
+            # RPC::XML::datetime_iso8601 class will strip them out if present.
             elsif (m{
                        ^           # start
                        \d{4}       # 4 digit year
@@ -570,7 +577,7 @@ sub new
         # given in the spec, so assume that other implementations can only
         # accept this form. Also, this should match the form that time2iso8601
         # produces.
-        $value = $7 ? "$1-$2-$3T$4:$5:$6$7" : "$1-$2-$3T$4:$5:$6";
+        $value = $7 ? "$1$2$3T$4:$5:$6$7" : "$1$2$3T$4:$5:$6";
         if ($8)
         {
             $value .= $8;
@@ -602,13 +609,15 @@ use base 'RPC::XML::simple_type';
 # no value need be passed to this method
 sub new
 {
-    my $class = shift;
-    my $value = undef;
+    my ($class, $value, $flag) = @_;
+    # We need $value so we can bless a reference to it. But regardless of
+    # what was passed, it needs to be undef to be a proper "nil".
+    undef $value;
 
-    if (! $RPC::XML::ALLOW_NIL)
+    if (! $RPC::XML::ALLOW_NIL && ! $flag)
     {
         $RPC::XML::ERROR = "${class}::new: \$RPC::XML::ALLOW_NIL must be set" .
-            'for RPC::XML::nil objects to be supported';
+            ' for RPC::XML::nil objects to be supported';
         return;
     }
 
@@ -1167,7 +1176,7 @@ sub new
 {
     my ($class, @args) = @_;
 
-    my ($self, %args);
+    my %args;
 
     $RPC::XML::ERROR = q{};
     if (blessed $args[0] and $args[0]->isa('RPC::XML::struct'))
