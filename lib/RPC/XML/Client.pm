@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2010 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -30,7 +30,7 @@
 
 package RPC::XML::Client;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
 use vars qw($VERSION $COMPRESSION_AVAILABLE);
@@ -60,7 +60,7 @@ BEGIN
     }
 }
 
-$VERSION = '1.32';
+$VERSION = '1.39';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 ###############################################################################
@@ -94,16 +94,15 @@ sub new
     my ($self, $UA, $REQ);
 
     # Start by getting the LWP::UA object
-    $UA = LWP::UserAgent->new((exists $attrs{useragent}) ?
-                              @{$attrs{useragent}} : ()) or
-        return "${class}::new: Unable to get LWP::UserAgent object";
+    $UA = LWP::UserAgent->new(
+        (exists $attrs{useragent}) ? @{$attrs{useragent}} : ()
+    );
     $UA->agent(sprintf '%s/%s %s', $class, $VERSION, $UA->agent);
     $self->{__useragent} = $UA;
     delete $attrs{useragent};
 
     # Next get the request object for later use
-    $REQ = HTTP::Request->new(POST => $location) or
-        return "${class}::new: Unable to get HTTP::Request object";
+    $REQ = HTTP::Request->new(POST => $location);
     $self->{__request} = $REQ;
     $REQ->header(Content_Type => 'text/xml');
     $REQ->protocol('HTTP/1.0');
@@ -213,7 +212,11 @@ sub simple_request
 #
 #   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
 #                   $self     in      ref       Class instance
-#                   $req      in      ref       RPC::XML::request object
+#                   $req      in      ref       RPC::XML::request object or
+#                                                 remote method name
+#                   @args     in      list      If $req is a method name, these
+#                                                 are potential arguments for
+#                                                 the remote call
 #
 #   Returns:        Success:    RPC::XML::response object instance
 #                   Failure:    error string
@@ -228,7 +231,11 @@ sub send_request ## no critic (ProhibitExcessComplexity)
 
     $me = ref($self) . '::send_request';
 
-    if (! (blessed $req and $req->isa('RPC::XML::request')))
+    if (! $req)
+    {
+        return "$me: No request object or remote method name given";
+    }
+    elsif (! (blessed $req and $req->isa('RPC::XML::request')))
     {
         # Assume that $req is the name of the routine to be called
         if (! ($req = RPC::XML::request->new($req, @args)))
@@ -240,7 +247,9 @@ sub send_request ## no critic (ProhibitExcessComplexity)
 
     # Start by setting up the request-clone for using in this instance
     $reqclone = $self->request->clone;
-    $reqclone->header(Host => URI->new($reqclone->uri)->host);
+    if (! $reqclone->header('Host')) {
+        $reqclone->header(Host => URI->new($reqclone->uri)->host);
+    }
     $can_compress = $self->compress; # Avoid making 4+ calls to the method
     if ($self->compress_requests and $can_compress and
         $req->length >= $self->compress_thresh)
@@ -258,13 +267,13 @@ sub send_request ## no critic (ProhibitExcessComplexity)
         $self->message_file_thresh <= $req->length)
     {
         require File::Spec;
-        require Symbol;
         # Start by creating a temp-file
         $tmpdir = $self->message_temp_dir || File::Spec->tmpdir;
-        $req_fh = Symbol::gensym();
-        if (! ($req_fh = File::Temp->new(UNLINK => 1, DIR => $tmpdir)))
+        # File::Temp->new() croaks on error, rather than just returning undef
+        $req_fh = eval { File::Temp->new(UNLINK => 1, DIR => $tmpdir) };
+        if (! $req_fh)
         {
-            return "$me: Error opening tmpfile: $!";
+            return "$me: Error opening tmpfile: $@";
         }
         binmode $req_fh;
         # Make it auto-flush
@@ -277,17 +286,19 @@ sub send_request ## no critic (ProhibitExcessComplexity)
         # into the primary handle.
         if ($do_compress && ($req->length >= $self->compress_thresh))
         {
-            my $fh2 = Symbol::gensym();
-            if (! ($fh2 = File::Temp->new(UNLINK => 1, DIR => $tmpdir)))
+            my $fh_compress = eval {
+                File::Temp->new(UNLINK => 1, DIR => $tmpdir);
+            };
+            if (! $fh_compress)
             {
-                return "$me: Error opening tmpfile: $!";
+                return "$me: Error opening compression tmpfile: $@";
             }
             # Make it auto-flush
-            $fh2->autoflush();
+            $fh_compress->autoflush();
 
             # Write the request to the second FH
-            $req->serialize($fh2);
-            seek $fh2, 0, 0;
+            $req->serialize($fh_compress);
+            seek $fh_compress, 0, 0;
 
             # Spin up the compression engine
             $com_engine = Compress::Zlib::deflateInit();
@@ -300,7 +311,7 @@ sub send_request ## no critic (ProhibitExcessComplexity)
             # the intended FH.
             my $buf = q{};
             my $out;
-            while (read $fh2, $buf, 4096)
+            while (read $fh_compress, $buf, 4096)
             {
                 $out = $com_engine->deflate(\$buf);
                 if (! defined $out)
@@ -318,7 +329,7 @@ sub send_request ## no critic (ProhibitExcessComplexity)
             print {$req_fh} $out;
 
             # Close the secondary FH. Rewinding the primary is done later.
-            if (! close $fh2)
+            if (! close $fh_compress)
             {
                 return "$me: Error closing spool-file: $!";
             }
@@ -343,8 +354,7 @@ sub send_request ## no critic (ProhibitExcessComplexity)
     else
     {
         # Treat the content strictly in-memory
-        $content = $req->as_string;
-        RPC::XML::utf8_downgrade($content);
+        utf8::downgrade($content = $req->as_string);
         if ($do_compress)
         {
             $content = Compress::Zlib::compress($content);
@@ -362,7 +372,7 @@ sub send_request ## no critic (ProhibitExcessComplexity)
     my $compression;
     my $parser = $self->parser->parse(); # Gets the ExpatNB object
     my $cb = sub {
-        my ($data, $resp) = @_;
+        my ($data_in, $resp) = @_;
 
         if (! defined $compression)
         {
@@ -385,13 +395,13 @@ sub send_request ## no critic (ProhibitExcessComplexity)
         if ($compression)
         {
             my $error;
-            if (! (($data, $error) = $com_engine->inflate($data)))
+            if (! (($data_in, $error) = $com_engine->inflate($data_in)))
             {
                 die "$me: Error in inflate() expanding data: $error\n";
             }
         }
 
-        $parser->parse_more($data);
+        $parser->parse_more($data_in);
         1;
     };
 
@@ -891,6 +901,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -899,7 +913,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -913,7 +927,7 @@ specification.
 
 =head1 SEE ALSO
 
-L<RPC::XML>, L<RPC::XML::Server>
+L<RPC::XML|RPC::XML>, L<RPC::XML::Server|RPC::XML::Server>
 
 =head1 AUTHOR
 

@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2010 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -27,7 +27,7 @@
 
 package RPC::XML::ParserFactory;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
 use vars qw($VERSION %AVAILABLE $PARSER_CLASS);
@@ -37,7 +37,7 @@ use subs qw(import new register);
 # critic policy, but can't be worked around:
 ## no critic (RequireCheckingReturnValueOfEval)
 
-$VERSION = '1.01';
+$VERSION = '1.03';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 # These are the known parsers supported, not including any that are specified
@@ -170,9 +170,9 @@ RPC::XML::ParserFactory - A factory class for RPC::XML::Parser objects
 =head1 DESCRIPTION
 
 The B<RPC::XML::ParserFactory> class encapsulates the process of creating
-parser objects that adhere to the interface described in L<RPC::XML::Parser>.
-Under the hood, the parser object created and returned could be from any of
-a number of implementation classes.
+parser objects that adhere to the interface described in
+L<RPC::XML::Parser|RPC::XML::Parser>.  Under the hood, the parser object
+created and returned could be from any of a number of implementation classes.
 
 =head1 IMPORT-TIME ARGUMENTS
 
@@ -281,6 +281,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -289,7 +293,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -303,7 +307,8 @@ specification.
 
 =head1 SEE ALSO
 
-L<RPC::XML>, L<RPC::XML::Client>, L<RPC::XML::Server>, L<XML::Parser>
+L<RPC::XML|RPC::XML>, L<RPC::XML::Client|RPC::XML::Client>,
+L<RPC::XML::Server|RPC::XML::Server>, L<XML::Parser|XML::Parser>
 
 =head1 AUTHOR
 

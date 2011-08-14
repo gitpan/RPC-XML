@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2010 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -28,7 +28,7 @@
 
 package Apache::RPC::Server;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
 use base qw(RPC::XML::Server);
@@ -50,7 +50,7 @@ BEGIN
     %Apache::RPC::Server::SERVER_TABLE = ();
 }
 
-our $VERSION = '1.36';
+our $VERSION = '1.39';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 sub version { return $Apache::RPC::Server::VERSION }
@@ -158,6 +158,10 @@ sub handler ($$) ## no critic (ProhibitExcessComplexity)
         while ($length)
         {
             $r->read($content, ($length < 2048) ? $length : 2048);
+            # If $content is undef, then the client has closed the connection
+            # on its end, and we're done (like it or not).
+            last if (! defined $content);
+
             $length -= length $content;
             if ($do_compress)
             {
@@ -228,16 +232,16 @@ sub handler ($$) ## no critic (ProhibitExcessComplexity)
             # first, so that we can compress it into the primary handle.
             if ($do_compress)
             {
-                my $fh2 = Apache::File->tmpfile;
-                if (! $fh2)
+                my $fh_compress = Apache::File->tmpfile;
+                if (! $fh_compress)
                 {
                     $r->log_error("$me: Error opening second tmpfile");
                     return SERVER_ERROR;
                 }
 
                 # Write the request to the second FH
-                $resp->serialize($fh2);
-                seek $fh2, 0, 0;
+                $resp->serialize($fh_compress);
+                seek $fh_compress, 0, 0;
 
                 # Spin up the compression engine
                 if (! ($com_engine = Compress::Zlib::deflateInit()))
@@ -251,7 +255,7 @@ sub handler ($$) ## no critic (ProhibitExcessComplexity)
                 # into the intended FH.
                 my $buf = q{};
                 my $out;
-                while (read $fh2, $buf, 4096)
+                while (read $fh_compress, $buf, 4096)
                 {
                     if (! (defined($out = $com_engine->deflate(\$buf))))
                     {
@@ -270,7 +274,7 @@ sub handler ($$) ## no critic (ProhibitExcessComplexity)
 
                 # Close the secondary FH. Rewinding the primary is done
                 # later.
-                close $fh2; ## no critic (RequireCheckedClose)
+                close $fh_compress; ## no critic (RequireCheckedClose)
             }
             else
             {
@@ -579,15 +583,15 @@ C<E<lt>LocationE<gt>> directives and familiar options. Additional configuration
 settings specific to this module are detailed below.
 
 Generally, externally-available methods are provided as files in the XML
-dialect explained in L<RPC::XML::Server>. A subclass derived from this class
-may of course use the methods provided by this class and its parent class for
-adding and manipulating the method table.
+dialect explained in L<RPC::XML::Server|RPC::XML::Server>. A subclass derived
+from this class may of course use the methods provided by this class and its
+parent class for adding and manipulating the method table.
 
 =head1 SUBROUTINES/METHODS
 
 The methods that the server publishes are provided by a combination of the
 installation files and Apache configuration values. Details on remote method
-syntax and semantics is covered in L<RPC::XML::Server>.
+syntax and semantics is covered in L<RPC::XML::Server|RPC::XML::Server>.
 
 =head2 Methods
 
@@ -643,7 +647,7 @@ B<RPC::XML::Server>. Three parameters are of concern to this class:
 The value associated with this key is a reference to an B<Apache> request
 object. If this is not passed, then it is assumed that this is being called in
 the start-up phase of the server and the value returned from
-C<< Apache->server >> (see L<Apache>) is used.
+C<< Apache->server >> (see L<Apache|Apache>) is used.
 
 =item server_id
 
@@ -658,9 +662,9 @@ configuration file.
 =back
 
 The server identification string and prefix concepts are explained in more
-detail in the next section. See L<RPC::XML::Server> for a full list of what
-additional arguments may be passed to B<new> for eventual proxy to the parent
-class constructor.
+detail in the next section. See L<RPC::XML::Server|RPC::XML::Server> for a full
+list of what additional arguments may be passed to B<new> for eventual proxy to
+the parent class constructor.
 
 =item child_started([BOOLEAN])
 
@@ -933,6 +937,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -941,7 +949,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -955,7 +963,7 @@ specification.
 
 =head1 SEE ALSO
 
-L<RPC::XML::Server>, L<RPC::XML>
+L<RPC::XML::Server|RPC::XML::Server>, L<RPC::XML|RPC::XML>
 
 =head1 AUTHOR
 

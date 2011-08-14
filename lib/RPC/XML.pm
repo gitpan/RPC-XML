@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2010 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -22,12 +22,13 @@
 
 package RPC::XML;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
 use vars qw(@EXPORT_OK %EXPORT_TAGS $VERSION $ERROR
-            %XMLMAP $XMLRE $ENCODING $FORCE_STRING_ENCODING $ALLOW_NIL);
-use subs qw(time2iso8601 smart_encode utf8_downgrade);
+            %XMLMAP $XMLRE $ENCODING $FORCE_STRING_ENCODING $ALLOW_NIL
+            $DATETIME_REGEXP);
+use subs qw(time2iso8601 smart_encode);
 use base 'Exporter';
 
 use Scalar::Util qw(blessed reftype);
@@ -46,22 +47,18 @@ BEGIN
 
     # Allow the <nil /> extension?
     $ALLOW_NIL = 0;
-
-    # Cribbed from the UTF-8 fixes in HTTP::Message, this may be discardable
-    # once full encoding support is in place:
-    *utf8_downgrade = defined(&utf8::downgrade) ?
-        \&utf8::downgrade : sub { };
 }
 
 @EXPORT_OK = qw(time2iso8601 smart_encode
-                RPC_BOOLEAN RPC_INT RPC_I4 RPC_DOUBLE RPC_DATETIME_ISO8601
-                RPC_BASE64 RPC_STRING RPC_NIL
+                RPC_BOOLEAN RPC_INT RPC_I4 RPC_I8 RPC_DOUBLE
+                RPC_DATETIME_ISO8601 RPC_BASE64 RPC_STRING RPC_NIL
                 $ENCODING $FORCE_STRING_ENCODING $ALLOW_NIL);
-%EXPORT_TAGS = (types => [ qw(RPC_BOOLEAN RPC_INT RPC_I4 RPC_DOUBLE RPC_STRING
-                              RPC_DATETIME_ISO8601 RPC_BASE64 RPC_NIL) ],
+%EXPORT_TAGS = (types => [ qw(RPC_BOOLEAN RPC_INT RPC_I4 RPC_I8 RPC_DOUBLE
+                              RPC_STRING RPC_DATETIME_ISO8601 RPC_BASE64
+                              RPC_NIL) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.52';
+$VERSION = '1.55';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 # Global error string
@@ -77,6 +74,25 @@ $ERROR = q{};
     q{'} => '&apos;',
 );
 $XMLRE = join q{} => keys %XMLMAP; $XMLRE = qr/([$XMLRE])/;
+
+# The XMLRPC spec only allows for the incorrect iso8601 format
+# without dashes, but dashes are part of the standard so we include
+# them. Note that the actual RPC::XML::datetime_iso8601 class will strip
+# them out if present.
+my $date_re =
+    qr{
+          (\d{4})-?
+          ([01]\d)-?
+          ([0123]\d)
+    }x;
+my $time_re =
+    qr{
+          ([012]\d):
+          ([0-5]\d):
+          ([0-5]\d)([.]\d+)?
+          (Z|[-+]\d\d:\d\d)?
+    }x;
+$DATETIME_REGEXP = qr{^${date_re}T${time_re}$};
 
 # All of the RPC_* functions are convenience-encoders
 sub RPC_STRING ($)
@@ -122,17 +138,10 @@ sub RPC_NIL ()
 sub time2iso8601
 {
     my $time = shift || time;
-    my $zone = shift || q{};
 
     my @time = gmtime $time;
     $time = sprintf '%4d%02d%02dT%02d:%02d:%02dZ',
                     $time[5] + 1900, $time[4] + 1, @time[3, 2, 1, 0];
-    if ($zone)
-    {
-        my $char = $zone > 0 ? q{+} : q{-};
-        chop $time; # Lose the Z if we're specifying a zone
-        $time .= $char . sprintf '%02d:00', abs $zone;
-    }
 
     return $time;
 }
@@ -169,7 +178,7 @@ sub time2iso8601
 
         foreach (@values)
         {
-            if (! defined $_) ## no critic (ProhibitCascadingIfElse)
+            if (! defined $_)
             {
                 $type = $ALLOW_NIL ?
                     RPC::XML::nil->new() : RPC::XML::string->new(q{});
@@ -179,7 +188,7 @@ sub time2iso8601
                 # Skip any that we've already seen
                 next if $seenrefs->{$_}++;
 
-                if (blessed($_) && ## no critic (ProhibitCascadingIfElse)
+                if (blessed($_) &&
                     ($_->isa('RPC::XML::datatype') || $_->isa('DateTime')))
                 {
                     # Only if the reference is a datatype or a DateTime
@@ -263,31 +272,13 @@ sub time2iso8601
             }
             # Pattern taken from perldata(1)
             elsif (! $FORCE_STRING_ENCODING &&
-                   /^([+-]?)(?=\d|\.\d)\d*(\.\d*)?([Ee]([+-]?\d+))?$/x &&
+                   /^[+-]?(?=\d|[.]\d)\d*(?:[.]\d*)?(?:[Ee](?:[+-]?\d+))?$/x &&
                    $_ > $MIN_DOUBLE &&
                    $_ < $MAX_DOUBLE)
             {
                 $type = RPC::XML::double->new($_);
             }
-            # The XMLRPC spec only allows for the incorrect iso8601 format
-            # without dashes, but dashes are part of the standard so we include
-            # them (DateTime->now->iso8601 includes them). Note that the actual
-            # RPC::XML::datetime_iso8601 class will strip them out if present.
-            elsif (m{
-                       ^           # start
-                       \d{4}       # 4 digit year
-                       -?          # "optional" dash
-                       [01]\d      # month
-                       -?          # optional dash
-                       [0123]\d    # day of month
-                       T           # Yes, "T"
-                       [012]\d:    # hours
-                       [012345]\d: # min
-                       [012345]\d  # seconds
-                       (?:\.\d+)?  # optional fractional seconds
-                       Z?          # optional "Z" to indicate UTC
-                       $           # end
-                }x)
+            elsif (/$DATETIME_REGEXP/)
             {
                 $type = RPC::XML::datetime_iso8601->new($_);
             }
@@ -342,6 +333,14 @@ sub new
 
     $RPC::XML::ERROR = q{};
     $class = ref($class) || $class;
+
+    if ($class eq 'RPC::XML::simple_type')
+    {
+        $RPC::XML::ERROR = 'RPC::XML::simple_type::new: Cannot instantiate ' .
+            'this class directly';
+        return;
+    }
+
     if (ref $value)
     {
         # If it is a scalar reference, just deref
@@ -354,6 +353,7 @@ sub new
             # We can only manage scalar references (or blessed scalar refs)
             $RPC::XML::ERROR = "${class}::new: Cannot instantiate from a " .
                 'reference not derived from scalar';
+            return;
         }
     }
 
@@ -364,6 +364,13 @@ sub new
 sub value
 {
     my $self = shift;
+
+    if (! ref $self)
+    {
+        $RPC::XML::ERROR =
+            "{$self}::value: Cannot be called as a static method";
+        return;
+    }
 
     return ${$self};
 }
@@ -376,6 +383,8 @@ sub as_string
     my $class = ref $self;
     if (! $class)
     {
+        $RPC::XML::ERROR =
+            "{$self}::as_string: Cannot be called as a static method";
         return;
     }
     $class =~ s/^.*\://;
@@ -393,10 +402,9 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    my $str = $self->as_string;
-    RPC::XML::utf8_downgrade($str);
-
+    utf8::downgrade(my $str = $self->as_string);
     print {$fh} $str;
+
     return;
 }
 
@@ -406,7 +414,7 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
 {
     my $self = shift;
 
-    RPC::XML::utf8_downgrade(my $str = $self->as_string);
+    utf8::downgrade(my $str = $self->as_string);
 
     return length $str;
 }
@@ -463,13 +471,15 @@ sub as_string
 {
     my $self = shift;
 
-    my $class = $self->type;
-    if (! $class)
+    if (! ref $self)
     {
+        $RPC::XML::ERROR =
+            "{$self}::as_string: Cannot be called as a static method";
         return;
     }
+    my $class = $self->type;
 
-    (my $value = sprintf '%.20f', ${$self}) =~ s/(\.\d+?)0+$/$1/;
+    (my $value = sprintf '%.20f', ${$self}) =~ s/([.]\d+?)0+$/$1/;
 
     return "<$class>$value</$class>";
 }
@@ -493,11 +503,13 @@ sub as_string
 
     my ($class, $value);
 
-    $class = $self->type;
-    if (! $class)
+    if (! ref $self)
     {
+        $RPC::XML::ERROR =
+            "{$self}::as_string: Cannot be called as a static method";
         return;
     }
+    $class = $self->type;
 
     ($value = defined ${$self} ? ${$self} : q{} )
         =~ s/$RPC::XML::XMLRE/$RPC::XML::XMLMAP{$1}/ge;
@@ -569,9 +581,7 @@ sub new
         $value = ${$value};
     }
 
-    if ($value && $value =~ m{^(\d{4})-?([01]\d)-?([0123]\d)T
-                              ([012]\d):([012345]\d):([012345]\d)(\.\d+)?
-                              (Z|[-+]\d\d:\d\d)?$}x)
+    if ($value && $value =~ /$RPC::XML::DATETIME_REGEXP/)
     {
         # This is the WRONG way to represent this, but it's the way it is
         # given in the spec, so assume that other implementations can only
@@ -823,7 +833,7 @@ sub serialize
     for (keys %{$self})
     {
         ($key = $_) =~ s/$RPC::XML::XMLRE/$RPC::XML::XMLMAP{$1}/ge;
-        RPC::XML::utf8_downgrade($key);
+        utf8::downgrade($key);
         print {$fh} "<member><name>$key</name><value>";
         $self->{$_}->serialize($fh);
         print {$fh} '</value></member>';
@@ -843,7 +853,7 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
     {
         $len += 45; # For all the constant XML presence
         $len += $self->{$key}->length;
-        RPC::XML::utf8_downgrade($key);
+        utf8::downgrade($key);
         $len += length $key;
     }
 
@@ -1082,17 +1092,23 @@ sub to_file
 
     my ($fh, $buf, $do_close, $count) = (undef, q{}, 0, 0);
 
-    if (ref $file and reftype($file) eq 'GLOB')
+    if (ref $file)
     {
-        $fh = $file;
+        if (reftype($file) eq 'GLOB')
+        {
+            $fh = $file;
+        }
+        else
+        {
+            $RPC::XML::ERROR = 'Unusable reference type passed to to_file';
+            return -1;
+        }
     }
     else
     {
-        require Symbol;
-        $fh = Symbol::gensym();
         if (! open $fh, '>', $file) ## no critic (RequireBriefOpen)
         {
-            $RPC::XML::ERROR = $!;
+            $RPC::XML::ERROR = "Error opening $file for writing: $!";
             return -1;
         }
         binmode $fh;
@@ -1129,6 +1145,8 @@ sub to_file
         }
         else
         {
+            # If the data is already decoded in the filehandle, then just copy
+            # it over.
             my $size;
             while ($size = read $self->{value_fh}, $buf, 4096)
             {
@@ -1136,6 +1154,8 @@ sub to_file
                 $count += $size;
             }
         }
+
+        # Restore the position of the file-pointer for the internal FH
         seek $self->{value_fh}, $self->{fh_pos}, 0;
     }
 
@@ -1143,7 +1163,7 @@ sub to_file
     {
         if (! close $fh)
         {
-            $RPC::XML::ERROR = $!;
+            $RPC::XML::ERROR = "Error closing $file after writing: $!";
             return -1;
         }
     }
@@ -1184,7 +1204,7 @@ sub new
         # Take the keys and values from the struct object as our own
         %args = %{$args[0]->value('shallow')};
     }
-    elsif (@args == 2)
+    elsif ((@args == 2) && ($args[0] =~ /^-?\d+$/) && length $args[1])
     {
         # This is a special convenience-case to make simple new() calls clearer
         %args = (faultCode   => RPC::XML::int->new($args[0]),
@@ -1304,6 +1324,14 @@ sub new
 
     # This is the method name to be called
     $name = shift @argz;
+    # Is it valid?
+    if ($name !~ m{^[\w.:/]+$})
+    {
+        $RPC::XML::ERROR =
+            'RPC::XML::request::new: Invalid method name specified';
+        return;
+    }
+
     # All the remaining args must be data.
     @argz = RPC::XML::smart_encode(@argz);
 
@@ -1312,7 +1340,7 @@ sub new
 
 # Accessor methods
 sub name { return shift->{name}; }
-sub args { return shift->{args} || []; }
+sub args { return shift->{args}; }
 
 ###############################################################################
 #
@@ -1356,8 +1384,7 @@ sub as_string
 sub serialize
 {
     my ($self, $fh) = @_;
-    my $name = $self->{name};
-    RPC::XML::utf8_downgrade($name);
+    utf8::downgrade(my $name = $self->{name});
 
     print {$fh} qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
@@ -1379,7 +1406,8 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
     my $self = shift;
 
     my $len = 100 + length $RPC::XML::ENCODING; # All the constant XML present
-    $len += length $self->{name};
+    utf8::downgrade(my $name = $self->{name});
+    $len += length $name;
 
     for (@{$self->{args}})
     {
@@ -1550,7 +1578,7 @@ RPC::XML - A set of classes for core data, message and XML handling
     use RPC::XML;
 
     $req = RPC::XML::request->new('fetch_prime_factors',
-                                  RPC::XML::int->new(985120528));
+                                  RPC::XML::int->new(985_120_528));
     ...
     $resp = RPC::XML::ParserFactory->new()->parse(STREAM);
     if (ref($resp))
@@ -1564,23 +1592,25 @@ RPC::XML - A set of classes for core data, message and XML handling
 
 =head1 DESCRIPTION
 
-The B<RPC::XML> package is an implementation of the B<XML-RPC> standard.
+The B<RPC::XML> package is an implementation of the B<XML-RPC> standard. The
+package as a whole provides classes for data, for clients, for servers and for
+parsers (based on the L<XML::Parser|XML::Parser> and L<XML::LibXML|XML::LibXML>
+packages from CPAN).
 
-The package provides a set of classes for creating values to pass to the
-constructors for requests and responses. These are lightweight objects, most
-of which are implemented as tied scalars so as to associate specific type
-information with the value. Classes are also provided for requests, responses,
-faults (errors) and a parser based on the L<XML::Parser> package from CPAN.
+This module provides a set of classes for creating values to pass to the
+constructors for requests and responses. These are lightweight objects, most of
+which are implemented as blessed scalar references so as to associate specific
+type information with the value. Classes are also provided for requests,
+responses and faults (errors) and a parsers .
 
-This module does not actually provide any transport implementation or
-server basis. For these, see L<RPC::XML::Client> and L<RPC::XML::Server>,
-respectively.
+This module does not actually provide any transport implementation or server
+basis. For these, see L<RPC::XML::Client|RPC::XML::Client> and
+L<RPC::XML::Server|RPC::XML::Server>, respectively.
 
 =head1 SUBROUTINES/METHODS
 
-At present, three simple subroutines are available for import. They must be
-explicitly imported as part of the C<use> statement, or with a direct call to
-C<import>:
+At present, two subroutines are available for import. They must be explicitly
+imported as part of the C<use> statement, or with a direct call to C<import>:
 
 =over 4
 
@@ -1621,7 +1651,7 @@ B<RPC::XML::datetime_iso8601> class.
 =back
 
 In addition to these, the following "helper" functions are also available. They
-may be imported explicitly, or via a tag of C<:types>:
+may be imported explicitly, or all may be imported via the tag C<:types>:
 
     RPC_BOOLEAN RPC_INT RPC_I4 RPC_I8 RPC_DOUBLE
     RPC_DATETIME_ISO8601 RPC_BASE64 RPC_STRING RPC_NIL
@@ -1635,7 +1665,7 @@ the tag C<:all>.
 
 =head1 CLASSES
 
-The classes provided by this module are broken into two groups: I<datatype>
+The classes provided by this module are broken into two groups: I<data>
 classes and I<message> classes.
 
 =head2 Data Classes
@@ -1667,7 +1697,7 @@ Returns the value as a XML-RPC fragment, with the proper tags, etc.
 =item serialize($filehandle)
 
 Send the stringified rendition of the data to the given file handle. This
-allows messages with arbitrarily-large Base-64 data within them to be sent
+allows messages with arbitrarily-large base-64 data within them to be sent
 without having to hold the entire message within process memory.
 
 =item length
@@ -1730,18 +1760,22 @@ program may specify any of: C<0>, C<no>, C<false>, C<1>, C<yes>, C<true>.
 =item RPC::XML::datetime_iso8601
 
 Creates an instance of the XML-RPC C<dateTime.iso8601> type. The specification
-for ISO 8601 may be found elsewhere. No processing is done to the data.
+for ISO 8601 may be found elsewhere. No processing is done to the data. Note
+that the XML-RPC specification actually got the format of an ISO 8601 date
+slightly wrong. Because this is what is in the published spec, this package
+produces dates that match the XML-RPC spec, not the the ISO 8601 spec. However,
+it will I<read> date-strings in proper ISO 8601 format.
 
 =item RPC::XML::nil
 
 Creates a C<nil> value. The value returned will always be B<undef>. No value
 should be passed when calling the constructor.
 
-Note that nil is an extension to B<XML-RPC>, which is not supported by
-all implementations. B<$RPC::XML::ALLOW_NIL> must be set to a non-false
-value before objects of this type can be constructed. See
-L</GLOBAL VARIABLES>. If B<$RPC::XML::ALLOW_NIL> is set to a false value,
-the parsers will not recognize the C<< <nil /> >> tag at all.
+Note that nil is an extension to B<XML-RPC>, which is not supported by all
+implementations. B<$RPC::XML::ALLOW_NIL> must be set to a non-false value
+before objects of this type can be constructed. See L</GLOBAL
+VARIABLES>. However, even if B<$RPC::XML::ALLOW_NIL> is set to a false value,
+the parsers will recognize the C<< <nil /> >> tag and construct an object.
 
 In practice, this type is only useful to denote the equivalent of a "void"
 return value from a function. The type itself is not interchangeable with
@@ -1914,7 +1948,7 @@ provided for clarity and simplicity.
 =head1 DIAGNOSTICS
 
 All constructors (in all data classes) return C<undef> upon failure, with the
-error message available in the package-global variable B<C<$RPC::XML::ERROR>>.
+error message available in the package-global variable B<$RPC::XML::ERROR>.
 
 =head1 GLOBAL VARIABLES
 
@@ -1984,6 +2018,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -1992,7 +2030,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -2006,7 +2044,7 @@ specification.
 
 =head1 SEE ALSO
 
-L<RPC::XML::Client>, L<RPC::XML::Server>, L<RPC::XML::Parser>, L<XML::Parser>
+L<RPC::XML::Client|RPC::XML::Client>, L<RPC::XML::Server|RPC::XML::Server>
 
 =head1 AUTHOR
 

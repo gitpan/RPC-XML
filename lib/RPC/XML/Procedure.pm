@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2010 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -9,7 +9,9 @@
 ###############################################################################
 #
 #   Description:    This class abstracts out all the procedure-related
-#                   operations from the RPC::XML::Server class
+#                   operations from the RPC::XML::Server class. It also
+#                   provides the RPC::XML::Method and RPC::XML::Function
+#                   namespaces.
 #
 #   Functions:      new
 #                   name        \
@@ -19,15 +21,15 @@
 #                   version      /
 #                   hidden      /
 #                   clone
-#                   is_valid
 #                   add_signature
 #                   delete_signature
 #                   make_sig_table
 #                   match_signature
 #                   reload
-#                   load_XPL_file
+#                   load_xpl_file
+#                   call
 #
-#   Libraries:      XML::Parser (used only on demand in load_XPL_file)
+#   Libraries:      XML::Parser (used only on demand in load_xpl_file)
 #                   File::Spec
 #
 #   Global Consts:  $VERSION
@@ -36,19 +38,25 @@
 #
 ###############################################################################
 
+# Perl::Critic:
+#
+# We use explicit @ISA in RPC::XML::Method and RPC::XML::Function because it
+# is faster than doing 'use base' when we're already in the same file.
+
+## no critic (ProhibitExplicitISA)
+
 package RPC::XML::Procedure;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
-use vars qw($VERSION);
-use subs qw(new is_valid name code signature help version hidden
-    add_signature delete_signature make_sig_table match_signature
-    reload load_XPL_file);
+use vars qw($VERSION %VALID_TYPES);
+use subs qw(
+    new name code signature help version hidden add_signature
+    delete_signature make_sig_table match_signature reload load_xpl_file
+);
 
-use AutoLoader 'AUTOLOAD';
 use File::Spec;
-
 use Scalar::Util 'blessed';
 
 use RPC::XML 'smart_encode';
@@ -56,8 +64,15 @@ use RPC::XML 'smart_encode';
 # This module also provides RPC::XML::Method
 ## no critic (ProhibitMultiplePackages)
 
-$VERSION = '1.21';
+$VERSION = '1.29';
 $VERSION = eval $VERSION;    ## no critic (ProhibitStringyEval)
+
+# This should match the set of type-classes defined in RPC::XML.pm. Note that
+# we use "datetime_iso8601" instead of "dateTime.iso8601", because that is how
+# it has to be in the signature.
+%VALID_TYPES = map { $_ => 1 }
+    (qw(int i4 i8 double string boolean datetime_iso8601 nil array struct
+        base64));
 
 ###############################################################################
 #
@@ -79,60 +94,63 @@ sub new
 {
     my ($class , @argz) = @_;
 
-    my $data;    # This will be a hashref that eventually gets blessed
+    my $new_proc;    # This will be a hashref that eventually gets blessed
 
-    $class = ref($class) || $class;
+    if (ref $class)
+    {
+        return __PACKAGE__ . '::new: Must be called as a static method';
+    }
 
-    #
     # There are three things that @argz could be:
-    #
     if (ref $argz[0])
     {
         # 1. A hashref containing all the relevant keys
-        $data  = {};
-        %{$data} = %{$argz[0]};
+
+        # Start wtih the defaults for the optional keys
+        $new_proc = {
+            namespace => q{},
+            version   => 0,
+            hidden    => 0,
+            help      => q{},
+        };
+        # Copy everything from the hash, don't try to use it directly
+        for (keys %{$argz[0]}) { $new_proc->{$_} = $argz[0]->{$_} }
     }
     elsif (@argz == 1)
     {
         # 2. Exactly one non-ref element, a file to load
 
-        # And here is where I cheat in a way that makes even me uncomfortable.
-        #
         # Loading code from an XPL file, it can actually be of a type other
         # than how this constructor was called. So what we are going to do is
-        # this: If $class is undef, that can only mean that we were called
-        # with the intent of letting the XPL file dictate the resulting object.
-        # If $class is set, then we'll call load_XPL_file normally, as a
-        # method, to allow for subclasses to tweak things.
-        if (defined $class)
+        # this: If $class is RPC::XML::Procedure, act like a factory method
+        # and return whatever the file claims to be. Otherwise, the file has
+        # to match $class or it's an error.
+        ($new_proc, my $pkg) = load_xpl_file($argz[0]);
+        if (! ref $new_proc)
         {
-            $data = $class->load_XPL_file($argz[0]);
-            if (! ref $data)
-            {
-                # load_XPL_path signalled an error
-                return $data;
-            }
+            # load_xpl_path signalled an error
+            return $new_proc;
         }
-        else
+        if ($class ne 'RPC::XML::Procedure' && $pkg ne $class)
         {
-            # Spoofing the "class" argument to load_XPL_file makes me feel
-            # even dirtier...
-            $data = load_XPL_file(\$class, $argz[0]);
-            if (! ref $data)
-            {
-                # load_XPL_path signalled an error
-                return $data;
-            }
-            $class = "RPC::XML::$class";
+            return "${class}::new: File loaded ($argz[0]) must match " .
+                'this calling class';
         }
+
+        $class = $pkg;
     }
     else
     {
         # 3. If there is more than one arg, it's a sort-of-hash. That is, the
         #    key 'signature' is allowed to repeat.
         my ($key, $val);
-        $data = {};
-        $data->{signature} = [];
+        $new_proc = {
+            namespace => q{},
+            version   => 0,
+            hidden    => 0,
+            help      => q{},
+            signature => [],
+        };
         while (@argz)
         {
             ($key, $val) = splice @argz, 0, 2;
@@ -141,32 +159,32 @@ sub new
                 # Since there may be more than one signature, we allow it to
                 # repeat. Of course, that's also why we can't just take @argz
                 # directly as a hash. *shrug*
-                push @{$data->{signature}},
+                push @{$new_proc->{signature}},
                     ref $val ? join q{ } => @{$val} : $val;
-            }
-            elsif (exists $data->{$key})
-            {
-                return "${class}::new: Key '$key' may not be repeated";
             }
             else
             {
-                $data->{$key} = $val;
+                $new_proc->{$key} = $val;
             }
         }
     }
 
-    if (! (exists $data->{signature} &&
-           (ref($data->{signature}) eq 'ARRAY') &&
-           scalar(@{$data->{signature}}) &&
-           $data->{name} &&
-           $data->{code}))
+    # A sanity check on the content of the object before we bless it:
+    if (! ($new_proc->{name} && $new_proc->{code}))
     {
-        return "${class}::new: Missing required data";
+        return "${class}::new: Missing required data (name or code)";
     }
-    bless $data, $class;
+    if (($class ne 'RPC::XML::Function') &&
+        (! ((exists $new_proc->{signature}) &&
+            (ref($new_proc->{signature}) eq 'ARRAY') &&
+            scalar(@{$new_proc->{signature}}))))
+    {
+        return "${class}::new: Missing required data (signatures)";
+    }
+    bless $new_proc, $class;
 
     # This needs to happen post-bless in case of error (for error messages)
-    return $data->make_sig_table;
+    return $new_proc->make_sig_table;
 }
 
 ###############################################################################
@@ -180,6 +198,8 @@ sub new
 #   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
 #                   $self     in      ref       Object of this class
 #
+#   Globals:        %VALID_TYPES
+#
 #   Returns:        Success:    $self
 #                   Failure:    error message
 #
@@ -188,23 +208,36 @@ sub make_sig_table
 {
     my $self = shift;
 
-    my ($return, $rest);
+    my ($return, $rest, @rest);
+    my $me = ref($self) . '::make_sig_table';
 
     delete $self->{sig_table};
     for my $sig (@{$self->{signature}})
     {
-        ($return, $rest) = split / /, $sig, 2;
-        if (! $rest)
+        ($return, @rest) = split / /, $sig;
+        if (! $return)
         {
-            $rest = q{};
+            return "$me: Invalid signature, cannot be null";
         }
+        if (! $VALID_TYPES{$return})
+        {
+            return "$me: Unknown return type '$return'";
+        }
+        # Not going to add List::MoreUtils to my dependencies list, so suppress
+        # this ciritic flag:
+        ## no critic (ProhibitBooleanGrep)
+        if (grep { ! $VALID_TYPES{$_} } @rest)
+        {
+            return "$me: One or more invalid types in signature";
+        }
+
+        $rest = join q{ } => @rest;
         # If the key $rest already exists, then this is a collision
         if ($self->{sig_table}->{$rest})
         {
             return
-                ref($self) . '::make_sig_table: Cannot have two different ' .
-                "return values for one set of params ($return vs. " .
-                "$self->{sig_table}->{$rest})";
+                "$me: Cannot have two different return values for one set " .
+                "of params ($return vs. $self->{sig_table}->{$rest})";
         }
 
         $self->{sig_table}->{$rest} = $return;
@@ -213,9 +246,8 @@ sub make_sig_table
     return $self;
 }
 
-#
 # These are basic accessor/setting functions for the various attributes
-#
+
 sub name { return shift->{name}; }    # "name" cannot be changed at this level
 sub namespace { return shift->{namespace} || q{}; }    # Nor can "namespace"
 
@@ -223,7 +255,10 @@ sub help
 {
     my ($self, $value) = @_;
 
-    $value and $self->{help} = $value;
+    if ($value)
+    {
+        $self->{help} = $value;
+    }
 
     return $self->{help};
 }
@@ -232,7 +267,10 @@ sub version
 {
     my ($self, $value) = @_;
 
-    $value and $self->{version} = $value;
+    if ($value)
+    {
+        $self->{version} = $value;
+    }
 
     return $self->{version};
 }
@@ -241,7 +279,10 @@ sub hidden
 {
     my ($self, $value) = @_;
 
-    $value and $self->{hidden} = $value;
+    if ($value)
+    {
+        $self->{hidden} = $value;
+    }
 
     return $self->{hidden};
 }
@@ -250,7 +291,10 @@ sub code
 {
     my ($self, $value) = @_;
 
-    ref $value eq 'CODE' and $self->{code} = $value;
+    if ($value and ref $value eq 'CODE')
+    {
+        $self->{code} = $value;
+    }
 
     return $self->{code};
 }
@@ -259,17 +303,29 @@ sub signature
 {
     my ($self, $sig) = @_;
 
-    if ($sig and ref $sig eq 'ARRAY')
+    if ($sig)
     {
-        my $old = $self->{signature};
-        $self->{signature} = $sig;
-        if (! ref $self->make_sig_table)
+        if (ref $sig eq 'ARRAY')
         {
-            # If it failed to re-init the table, restore the old list (and old
-            # table). We don't have to check this return, since it had worked
-            # before.
-            $self->{signature} = $old;
-            $self->make_sig_table;
+            my $old = $self->{signature};
+            $self->{signature} = $sig;
+            my $is_good = $self->make_sig_table;
+            if (! ref $is_good)
+            {
+                # If it failed to re-init the table, restore the old list (and
+                # old table). We don't have to check this return, since it had
+                # worked before.
+                $self->{signature} = $old;
+                $self->make_sig_table;
+
+                # Return an error message, since this failed:
+                return ref($self) . "::signature: $is_good";
+            }
+        }
+        else
+        {
+            # Anything not an array ref isn't useful
+            return ref($self) . "::signature: Bad value '$sig'";
         }
     }
 
@@ -277,13 +333,450 @@ sub signature
     return [ @{$self->{signature}} ];
 }
 
+###############################################################################
+#
+#   Sub Name:       clone
+#
+#   Description:    Create a near-exact copy of the invoking object, save that
+#                   the listref in the "signature" key is a copy, not a ref
+#                   to the same list.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#
+#   Returns:        Success:    $new_self
+#                   Failure:    error message
+#
+###############################################################################
+sub clone
+{
+    my $self = shift;
+
+    my $new_self = {};
+    for (keys %{$self})
+    {
+        next if $_ eq 'signature';
+        $new_self->{$_} = $self->{$_};
+    }
+    if (! $self->isa('RPC::XML::Function'))
+    {
+        $new_self->{signature} = [ @{$self->{signature}} ];
+    }
+
+    return bless $new_self, ref $self;
+}
+
+###############################################################################
+#
+#   Sub Name:       add_signature
+#                   delete_signature
+#
+#   Description:    This pair of functions may be used to add and remove
+#                   signatures from a method-object.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#                   @args     in      list      One or more signatures
+#
+#   Returns:        Success:    $self
+#                   Failure:    error string
+#
+###############################################################################
+sub add_signature
+{
+    my ($self, @args) = @_;
+
+    my (%sigs, $is_good, $old);
+
+    # Preserve the original in case adding the new one causes a problem
+    $old = $self->{signature};
+    %sigs = map { $_ => 1 } @{$self->{signature}};
+    for my $one_sig (@args)
+    {
+        my $sig_key = (ref $one_sig) ? join q{ } => @{$one_sig} : $one_sig;
+        $sigs{$sig_key} = 1;
+    }
+    $self->{signature} = [ keys %sigs ];
+    $is_good = $self->make_sig_table;
+    if (! ref $is_good)
+    {
+        # Because this failed, we have to restore the old table and return
+        # an error
+        $self->{signature} = $old;
+        $self->make_sig_table;
+        return ref($self) . '::add_signature: Error re-hashing table: ' .
+            $is_good;
+    }
+
+    return $self;
+}
+
+sub delete_signature
+{
+    my ($self, @args) = @_;
+
+    my %sigs;
+
+    my $old = $self->{signature};
+    %sigs = map { $_ => 1 } @{$self->{signature}};
+    for my $one_sig (@args)
+    {
+        my $sig_key = (ref $one_sig) ? join q{ } => @{$one_sig} : $one_sig;
+        delete $sigs{$sig_key};
+    }
+    $self->{signature} = [ keys %sigs ];
+
+    if (@{$self->{signature}} == 0)
+    {
+        # Don't have to re-run make_sig_table, because it's still valid for
+        # this set:
+        $self->{signature} = $old;
+        return ref($self) . '::delete_signature: Cannot delete last signature';
+    }
+
+    # This can't fail, because deleting a signature will never cause an
+    # ambiguity in the table like adding one could.
+    return $self->make_sig_table;
+}
+
+###############################################################################
+#
+#   Sub Name:       match_signature
+#
+#   Description:    Determine if the passed-in signature string matches any
+#                   of this method's known signatures.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#                   $sig      in      scalar    Signature to check for
+#
+#   Returns:        Success:    return type as a string
+#                   Failure:    0
+#
+###############################################################################
+sub match_signature
+{
+    my $self = shift;
+    my $sig  = shift;
+
+    if (ref $sig)
+    {
+        $sig = join q{ } => @{$sig};
+    }
+
+    return $self->{sig_table}->{$sig} || 0;
+}
+
+###############################################################################
+#
+#   Sub Name:       reload
+#
+#   Description:    Reload the method's code and ancillary data from the file
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#
+#   Returns:        Success:    $self
+#                   Failure:    error message
+#
+###############################################################################
+sub reload
+{
+    my $self = shift;
+
+    my $class = ref $self;
+    my $me = "${class}::reload";
+
+    if (! $self->{file})
+    {
+        return "$me: No file associated with method $self->{name}";
+    }
+
+    my ($newly_loaded) = load_xpl_file($self->{file});
+
+    if (ref $newly_loaded)
+    {
+        # Update the information on this actual object
+        for (keys %{$newly_loaded})
+        {
+            $self->{$_} = $newly_loaded->{$_};
+        }
+        # Re-calculate the signature table, in case that changed as well
+        return $self->make_sig_table;
+    }
+    else
+    {
+        return "$me: Error loading $self->{file}: $newly_loaded";
+    }
+}
+
+###############################################################################
+#
+#   Sub Name:       load_xpl_file
+#
+#   Description:    Load a XML-encoded method description (generally denoted
+#                   by a *.xpl suffix) and return the relevant information.
+#
+#                   Note that this is not a method, it does not take $self as
+#                   an argument.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $file     in      scalar    File to load
+#
+#   Returns:        Success:    hashref of values
+#                   Failure:    error string
+#
+###############################################################################
+sub load_xpl_file
+{
+    my $file = shift;
+
+    require XML::Parser;
+
+    my ($me, $new_proc, $signature, $code, $codetext, $accum, $P, $fh,
+        $eval_ret, $class, %attr);
+
+    $me = __PACKAGE__ . '::load_xpl_file';
+
+    $new_proc = {};
+    # So these don't end up undef, since they're optional elements
+    $new_proc->{hidden}    = 0;
+    $new_proc->{version}   = q{};
+    $new_proc->{help}      = q{};
+    $new_proc->{namespace} = __PACKAGE__;
+    $P = XML::Parser->new(
+        ErrorContext => 1,
+        Handlers     => {
+            Char => sub { $accum .= $_[1] },
+            Start => sub { %attr = splice @_, 2 },
+            End => sub {
+                my $elem = $_[1];
+
+                $accum =~ s/^\s+//;
+                $accum =~ s/\s+$//;
+                if ($elem eq 'signature')
+                {
+                    $new_proc->{signature} ||= [];
+                    push @{$new_proc->{signature}}, $accum;
+                }
+                elsif ($elem eq 'hidden')
+                {
+                    $new_proc->{hidden} = 1;
+                }
+                elsif ($elem eq 'code')
+                {
+                    if (! ($attr{language} &&
+                           $attr{language} ne 'perl'))
+                    {
+                        $new_proc->{$elem} = $accum;
+                    }
+                }
+                elsif ('def' eq substr $elem, -3)
+                {
+                    $class = 'RPC::XML::' . ucfirst substr $elem, 0, -3;
+                }
+                else
+                {
+                    $new_proc->{$elem} = $accum;
+                }
+
+                %attr  = ();
+                $accum = q{};
+            }
+        }
+    );
+    if (! $P)
+    {
+        return "$me: Error creating XML::Parser object";
+    }
+    open $fh, '<', $file or return "$me: Error opening $file for reading: $!";
+    # Trap any errors
+    $eval_ret = eval { $P->parse($fh); 1; };
+    close $fh or return "$me: Error closing $file: $!";
+    if (! $eval_ret)
+    {
+        return "$me: Error parsing $file: $@";
+    }
+
+    # Try to normalize $codetext before passing it to eval
+
+    # Fudge a little and let them use '.' as a synonym for '::' in the
+    # namespace hierarchy.
+    $new_proc->{namespace} =~ s/[.]/::/g;
+
+    # Next step is to munge away any actual subroutine name so that the eval
+    # yields an anonymous sub. Also insert the namespace declaration.
+    ($codetext = $new_proc->{code}) =~
+        s/sub\s+(?:[\w:]+)?\s*[{]/sub \{ package $new_proc->{namespace}; /;
+    $code = eval $codetext; ## no critic (ProhibitStringyEval)
+    return "$me: Error creating anonymous sub: $@" if $@;
+
+    $new_proc->{code} = $code;
+    # Add the file's mtime for when we check for stat-based reloading, name
+    # for reloading, and init the "called" counter to 0.
+    $new_proc->{mtime}  = (stat $file)[9];
+    $new_proc->{file}   = $file;
+    $new_proc->{called} = 0;
+
+    return ($new_proc, $class);
+}
+
+###############################################################################
+#
+#   Sub Name:       call
+#
+#   Description:    Encapsulates the invocation of the code block that the
+#                   object is abstracting. Manages parameters, signature
+#                   checking, etc.
+#
+#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
+#                   $self     in      ref       Object of this class
+#                   $srv      in      ref       An object derived from the
+#                                                 RPC::XML::Server class
+#                   @params_in in     list      The params for the call itself
+#
+#   Globals:        None.
+#
+#   Environment:    None.
+#
+#   Returns:        Success:    value
+#                   Failure:    RPC::XML::fault object
+#
+###############################################################################
+sub call
+{
+    my ($self, $srv, @params_in) = @_;
+
+    my (@paramtypes, @params, $signature, $resptype, $response, $name);
+
+    $name = $self->name;
+    # Create the param list.
+    # The type for the response will be derived from the matching signature
+    @paramtypes = map { $_->type } @params_in;
+    @params     = map { $_->value } @params_in;
+    $signature = join q{ } => @paramtypes;
+    $resptype = $self->match_signature($signature);
+    # Since there must be at least one signature with a return value (even
+    # if the param list is empty), this tells us if the signature matches:
+    if (! $resptype)
+    {
+        return $srv->server_fault(
+            badsignature =>
+            "method $name has no matching signature for the argument list: " .
+            "[$signature]"
+        );
+    }
+
+    # Set these in case the server object is part of the param list
+    local $srv->{signature} =          ## no critic (ProhibitLocalVars)
+        [ $resptype, @paramtypes ];
+    local $srv->{method_name} = $name; ## no critic (ProhibitLocalVars)
+    # For RPC::XML::Method (and derivatives), pass the server object
+    if ($self->isa('RPC::XML::Method'))
+    {
+        unshift @params, $srv;
+    }
+
+    # Now take a deep breath and call the method with the arguments
+    if (! eval { $response = $self->{code}->(@params); 1; })
+    {
+        # On failure, propagate user-generated RPC::XML::fault exceptions, or
+        # transform Perl-level error/failure into such an object
+        if (blessed $@ and $@->isa('RPC::XML::fault'))
+        {
+            return $@;
+        }
+        else
+        {
+            return $srv->server_fault(
+                execerror => "Method $name returned error: $@"
+            );
+        }
+    }
+
+    # Increment the 'called' key on the proc UNLESS the proc is named
+    # 'system.status' and has a boolean-true as the first param.
+    if (! (($name eq 'system.status') &&
+           @params_in &&
+           ($paramtypes[0] eq 'boolean') &&
+           $params[0]))
+    {
+        $self->{called}++;
+    }
+    # Create a suitable return value
+    if (! ref $response)
+    {
+        if ($resptype eq 'scalar')
+        {
+            # Server code from the RPC::XML::Function class doesn't use
+            # signatures, so if they didn't encode the returned value
+            # themselves they're trusting smart_encode() to get it right.
+            $response = smart_encode($response);
+        }
+        else
+        {
+            # We checked that this was valid earlier, so no need for further
+            # tests here.
+            $response = "RPC::XML::$resptype"->new($response);
+        }
+    }
+
+    return $response;
+}
+
+###############################################################################
+#
+#   Description:    This is now an empty sub-class of RPC::XML::Procedure.
+#                   It differs behaviorally from ::Procedure in that the
+#                   RPC::XML::Server object is passed in the arguments list
+#                   when the underlying code is invoked by call().
+#
+#   Functions:      None.
+#
+###############################################################################
+
 package RPC::XML::Method;
 
 use strict;
-use base qw(RPC::XML::Procedure);
+use warnings;
+use vars qw(@ISA);
 
-# Needed for AutoSplit to be happy:
-package RPC::XML::Procedure;
+@ISA = qw(RPC::XML::Procedure);
+
+###############################################################################
+#
+#   Description:    This is a type of Procedure that does no signature tests
+#                   at either creation or invocation. Like RPC::XML::Procedure
+#                   it does *not* get the RPC::XML::Server object when the
+#                   underlying code is invoked by call().
+#
+#   Functions:      signature
+#                   make_sig_table (called by some superclass methods)
+#                   add_signature
+#                   delete_signature
+#                   match_signature
+#
+###############################################################################
+
+package RPC::XML::Function;
+
+use strict;
+use warnings;
+use vars qw(@ISA);
+use subs qw(
+    signature make_sig_table add_signature delete_signature match_signature
+);
+
+@ISA = qw(RPC::XML::Procedure);
+
+# These are the bits that have to be different for RPC::XML::Function versus
+# the other procedure types. They are simple-enough that they don't need
+# dedicated comment-blocks for them.
+sub signature        { return [ 'scalar' ]; }
+sub make_sig_table   { return shift; }
+sub add_signature    { return shift; }
+sub delete_signature { return shift; }
+sub match_signature  { return 'scalar'; }
 
 1;
 
@@ -298,19 +791,12 @@ RPC::XML::Procedure - Object encapsulation of server-side RPC procedures
     require RPC::XML::Procedure;
 
     ...
-    $method_1 = RPC::XML::Procedure->new({ name => 'system.identity',
-                                           code => sub { ... },
-                                           signature => [ 'string' ] });
-    $method_2 = RPC::XML::Procedure->new('/path/to/status.xpl');
-
-=head1 IMPORTANT NOTE
-
-This package is comprised of the code that was formerly B<RPC::XML::Method>.
-The package was renamed when the decision was made to support procedures and
-methods as functionally different entities. It is not necessary to include
-both this module and B<RPC::XML::Method> -- this module provides the latter as
-an empty subclass. In time, B<RPC::XML::Method> will be removed from the
-distribution entirely.
+    $procedure = RPC::XML::Procedure->new({ name => 'system.identity',
+                                            code => sub { ... },
+                                            signature => [ 'string' ] });
+    $method    = RPC::XML::Method->new('/path/to/status.xpl');
+    $function  = RPC::XML::Function->new(name => 'add',
+                                         code => sub { ... });
 
 =head1 DESCRIPTION
 
@@ -318,7 +804,7 @@ The B<RPC::XML::Procedure> package is designed primarily for behind-the-scenes
 use by the B<RPC::XML::Server> class and any subclasses of it. It is
 documented here in case a project chooses to sub-class it for their purposes
 (which would require setting the C<method_class> attribute when creating
-server objects, see L<RPC::XML::Server>).
+server objects, see L<RPC::XML::Server|RPC::XML::Server>).
 
 This package grew out of the increasing need to abstract the operations that
 related to the methods a given server instance was providing. Previously,
@@ -328,6 +814,42 @@ themselves. In the spirit of the original hashes, all the key data is kept in
 clear, intuitive hash keys (rather than obfuscated as the other classes
 do). Thus it is important to be clear on the interface here before
 sub-classing this package.
+
+=head1 CLASSES
+
+This module provides three classes, representing the three types of procedures
+that servers can use:
+
+=over
+
+=item Methods (B<RPC::XML::Method>)
+
+Code that is considered a "method" by the server is called as though it were,
+in fact, a method in that class. The first argument in the list is the server
+object itself, with the arguments to the call making up the rest of the list.
+The server checks the signature of the method against the arguments list
+before the call is made. See below (L</"How Procedures Are Called">) for more
+on the invocation of code as methods.
+
+=item Procedures (B<RPC::XML::Procedure>)
+
+Code that is considered a "procedure" by the server is called like a normal
+(non-method) subroutine call. The server object is not injected into the
+arguments list. The signature of the procedure is checked again the list of
+arguments before the call is made, as with methods.
+
+=item Functions (B<RPC::XML::Function>)
+
+Lastly, code that is considered a "function" is the simplest of the three:
+it does not have the server object injected into the arguments list, and no
+check of signatures is done before the call is made. It is the responsibility
+of the function to properly understand the arguments list, and to return a
+value that the caller will understand.
+
+=back
+
+There is (currently) no version that is called like a method but ignores
+signatures like a function.
 
 =head1 SUBROUTINES/METHODS
 
@@ -360,8 +882,8 @@ when methods were implemented simply as hash references.
 
 If there is more than one argument in the list, then the list is assumed to be
 a sort of "ersatz" hash construct, in that one of the keys (C<signature>) is
-allowed to occur multiple times. Otherwise, each of the following is allowed,
-but may only occur once:
+allowed to "stack" if it occur multiple times. Otherwise, any keys that occur
+multiple times overwrite the previous value:
 
 =over 12
 
@@ -376,8 +898,8 @@ calls for the method
 
 =item signature
 
-(May appear more than once) Provides one calling-signature for the method, as
-either a space-separated string of types or a list-reference
+Provides one calling-signature for the method, as either a space-separated
+string of types or a list-reference
 
 =item help
 
@@ -459,14 +981,6 @@ value.
 
 Returns or sets the version string for the method (overwriting as with the
 other accessors).
-
-=item is_valid
-
-Returns a true/false value as to whether the object currently has enough
-content to be a valid method for a server to publish. This entails having at
-the very least a name, one or more signatures, and a code-reference to route
-the calls to. A server created from the classes in this software suite will
-not accept a method that is not valid.
 
 =item add_signature(LIST)
 
@@ -577,6 +1091,8 @@ The lightweight DTD for the layout can be summarized as:
                                   signature+, help?, code)>
         <!ELEMENT  methoddef     (name, namespace?, version?, hidden?,
                                   signature+, help?, code)>
+        <!ELEMENT  functiondef   (name, namespace?, version?, hidden?,
+                                  signature+, help?, code)>
         <!ELEMENT  name       (#PCDATA)>
         <!ELEMENT  namespace  (#PCDATA)>
         <!ELEMENT  version    (#PCDATA)>
@@ -586,24 +1102,24 @@ The lightweight DTD for the layout can be summarized as:
         <!ELEMENT  code       (#PCDATA)>
         <!ATTLIST  code       language (#PCDATA)>
 
-The containing tag is always one of C<< <methoddef> >> or
-C<< <proceduredef> >>. The tags that specify name, signatures and the code
+The containing tag is always one of C<< <methoddef> >>, C<< <proceduredef> >>
+or C<< <functiondef> >>. The tags that specify name, signatures and the code
 itself must always be present. Some optional information may also be
 supplied. The "help" text, or what an introspection API would expect to use to
 document the method, is also marked as optional.  Having some degree of
 documentation for all the methods a server provides is a good rule of thumb,
 however.
 
-The default methods that this package provides are turned into XPL files by
-the B<make_method> tool (see L<make_method>). The final forms of these may
-serve as examples of what the file should look like.
+The default methods that this package provides are turned into XPL files by the
+B<make_method> tool (see L<make_method|make_method>). The final forms of these
+may serve as examples of what the file should look like.
 
 =item Information used only for book-keeping
 
 Some of the information in the XPL file is only for book-keeping: the version
 stamp of a method is never involved in the invocation. The server also keeps
 track of the last-modified time of the file the method is read from, as well
-as the full directory path to that file. The C<E<lt>hidden /E<gt>> tag is used
+as the full directory path to that file. The C<< <hidden /> >> tag is used
 to identify those methods that should not be exposed to the outside world
 through any sort of introspection/documentation API. They are still available
 and callable, but the client must possess the interface information in order
@@ -648,7 +1164,7 @@ features and options, and is out of the scope of this particular manual
 page. The package F<Makefile.PL> features an example of engineering the
 automatic generation of XPL files and their delivery as a part of the normal
 Perl module build process. Using this tool is highly recommended over managing
-XPL files directly. For the full details, see L<make_method>.
+XPL files directly. For the full details, see L<make_method|make_method>.
 
 =head1 NAMESPACES
 
@@ -711,6 +1227,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -719,7 +1239,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -733,446 +1253,10 @@ specification.
 
 =head1 SEE ALSO
 
-L<RPC::XML::Server>, L<make_method>
+L<RPC::XML::Server|RPC::XML::Server>, L<make_method|make_method>
 
 =head1 AUTHOR
 
 Randy J. Ray C<< <rjray@blackperl.com> >>
 
 =cut
-
-###############################################################################
-#
-#   Sub Name:       clone
-#
-#   Description:    Create a near-exact copy of the invoking object, save that
-#                   the listref in the "signature" key is a copy, not a ref
-#                   to the same list.
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#
-#   Returns:        Success:    $new_self
-#                   Failure:    error message
-#
-###############################################################################
-sub clone
-{
-    my $self = shift;
-
-    my $new_self = {};
-    for (keys %{$self})
-    {
-        next if $_ eq 'signature';
-        $new_self->{$_} = $self->{$_};
-    }
-    $new_self->{signature} = [];
-    @{$new_self->{signature}} = @{$self->{signature}};
-
-    return bless $new_self, ref $self;
-}
-
-###############################################################################
-#
-#   Sub Name:       is_valid
-#
-#   Description:    Boolean test to tell if the calling object has sufficient
-#                   data to be used as a server method for RPC::XML::Server or
-#                   Apache::RPC::Server.
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object to test
-#
-#   Returns:        Success:    1, valid/complete
-#                   Failure:    0, invalid/incomplete
-#
-###############################################################################
-sub is_valid
-{
-    my $self = shift;
-
-    return (    (ref($self->{code}) eq 'CODE')
-            and $self->{name}
-            and (ref($self->{signature}) && scalar(@{$self->{signature}})));
-}
-
-###############################################################################
-#
-#   Sub Name:       add_signature
-#                   delete_signature
-#
-#   Description:    This pair of functions may be used to add and remove
-#                   signatures from a method-object.
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#                   @args     in      list      One or more signatures
-#
-#   Returns:        Success:    $self
-#                   Failure:    error string
-#
-###############################################################################
-sub add_signature
-{
-    my ($self, @args) = @_;
-
-    my (%sigs, $tmp, $old);
-
-    # Preserve the original in case adding the new one causes a problem
-    $old = $self->{signature};
-    %sigs = map { $_ => 1 } @{$self->{signature}};
-    for my $one_sig (@args)
-    {
-        $tmp = (ref $one_sig) ? join q{ } => @{$one_sig} : $one_sig;
-        $sigs{$tmp} = 1;
-    }
-    $self->{signature} = [ keys %sigs ];
-    $tmp = $self->make_sig_table;
-    if (! ref $tmp)
-    {
-        # Because this failed, we have to restore the old table and return
-        # an error
-        $self->{signature} = $old;
-        $self->make_sig_table;
-        return ref($self) . '::add_signature: Error re-hashing table: ' . $tmp;
-    }
-
-    return $self;
-}
-
-sub delete_signature
-{
-    my ($self, @args) = @_;
-
-    my (%sigs, $tmp, $old);
-
-    # Preserve the original in case adding the new one causes a problem
-    $old = $self->{signature};
-    %sigs = map { $_ => 1 } @{$self->{signature}};
-    for my $one_sig (@args)
-    {
-        $tmp = (ref $one_sig) ? join q{ } => @{$one_sig} : $one_sig;
-        delete $sigs{$tmp};
-    }
-    $self->{signature} = [ keys %sigs ];
-    $tmp = $self->make_sig_table;
-    if  (! ref $tmp)
-    {
-        # Because this failed, we have to restore the old table and return
-        # an error
-        $self->{signature} = $old;
-        $self->make_sig_table;
-        return
-            ref $self . '::delete_signature: Error re-hashing table: ' . $tmp;
-    }
-
-    return $self;
-}
-
-###############################################################################
-#
-#   Sub Name:       match_signature
-#
-#   Description:    Determine if the passed-in signature string matches any
-#                   of this method's known signatures.
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#                   $sig      in      scalar    Signature to check for
-#
-#   Returns:        Success:    return type as a string
-#                   Failure:    0
-#
-###############################################################################
-sub match_signature
-{
-    my $self = shift;
-    my $sig  = shift;
-
-    if (ref $sig)
-    {
-        $sig = join q{ } => @{$sig};
-    }
-
-    return $self->{sig_table}->{$sig} || 0;
-}
-
-###############################################################################
-#
-#   Sub Name:       reload
-#
-#   Description:    Reload the method's code and ancillary data from the file
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#
-#   Returns:        Success:    $self
-#                   Failure:    error message
-#
-###############################################################################
-sub reload
-{
-    my $self = shift;
-
-    if (! $self->{file})
-    {
-        return sprintf '%s::reload: No file associated with method %s',
-            ref $self, $self->{name};
-    }
-
-    my $tmp = $self->load_XPL_file($self->{file});
-
-    if (ref $tmp)
-    {
-        # Update the information on this actual object
-        for (keys %{$tmp})
-        {
-            $self->{$_} = $tmp->{$_};
-        }
-        # Re-calculate the signature table, in case that changed as well
-        return $self->make_sig_table;
-    }
-
-    return $tmp;
-}
-
-###############################################################################
-#
-#   Sub Name:       load_XPL_file
-#
-#   Description:    Load a XML-encoded method description (generally denoted
-#                   by a *.xpl suffix) and return the relevant information.
-#
-#                   Note that this does not fill in $self if $self is a hash
-#                   or object reference. This routine is not a substitute for
-#                   calling new() (which is why it isn't part of the public
-#                   API).
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#                   $file     in      scalar    File to load
-#
-#   Returns:        Success:    hashref of values
-#                   Failure:    error string
-#
-###############################################################################
-sub load_XPL_file
-{
-    my $self = shift;
-    my $file = shift;
-
-    require XML::Parser;
-
-    my ($me, $data, $signature, $code, $codetext, $accum, $P, %attr);
-
-    if (ref($self) eq 'SCALAR')
-    {
-        $me = __PACKAGE__ . '::load_XPL_file';
-    }
-    else
-    {
-        $me = (ref $self) || $self || __PACKAGE__;
-        $me .= '::load_XPL_file';
-    }
-    $data = {};
-    # So these don't end up undef, since they're optional elements
-    $data->{hidden}  = 0;
-    $data->{version} = q{};
-    $data->{help}    = q{};
-    $data->{called}  = 0;
-    $P = XML::Parser->new(
-        ErrorContext => 1,
-        Handlers     => {
-            Char => sub { $accum .= $_[1] },
-            Start => sub { %attr = splice @_, 2 },
-            End => sub {
-                my $elem = $_[1];
-
-                $accum =~ s/^[\s\n]+//;
-                $accum =~ s/[\s\n]+$//;
-                if ($elem eq 'signature')
-                {
-                    $data->{signature} ||= [];
-                    push @{$data->{signature}}, $accum;
-                }
-                elsif ($elem eq 'code')
-                {
-                    if (! ($attr{language} &&
-                           $attr{language} ne 'perl'))
-                    {
-                        $data->{$elem} = $accum;
-                    }
-                }
-                elsif ('def' eq substr $elem, -3)
-                {
-                    # Don't blindly store the container tag...
-                    # We may need it to tell the caller what
-                    # our type is
-                    if (ref $self eq 'SCALAR')
-                    {
-                        ${$self} = ucfirst substr $elem, 0, -3;
-                    }
-                }
-                else
-                {
-                    $data->{$elem} = $accum;
-                }
-
-                %attr  = ();
-                $accum = q{};
-            }
-        }
-    );
-    if (! $P)
-    {
-        return "$me: Error creating XML::Parser object";
-    }
-    open my $fh, '<', $file or
-        return "$me: Error opening $file for reading: $!";
-    # Trap any errors
-    eval { $P->parse($fh); }; ## no critic (RequireCheckingReturnValueOfEval)
-    close $fh or return "$me: Error closing $file: $!";
-    if ($@)
-    {
-        return "$me: Error parsing $file: $@";
-    }
-
-    # Try to normalize $codetext before passing it to eval
-
-    # First step is set the namespace the code will live in. The default is
-    # the package that we're in (be it ::Procedure, ::Method, etc.). If they
-    # specify one, use it instead.
-    if ($data->{namespace})
-    {
-        # Fudge a little and let them '.' as a synonym for '::' in the
-        # namespace hierarchy.
-        $data->{namespace} =~ s{\.}{::}g;
-    }
-    else
-    {
-        $data->{namespace} = __PACKAGE__;
-    }
-
-    # Next step is to munge away any actual subroutine name so that the eval
-    # yields an anonymous sub. Also insert the namespace declaration.
-    ($codetext = $data->{code}) =~
-        s/sub[\s\n]+([\w:]+)?[\s\n]*\{/sub \{ package $data->{namespace}; /x;
-    $code = eval $codetext; ## no critic (ProhibitStringyEval)
-    return "$me: Error creating anonymous sub: $@" if $@;
-
-    $data->{code} = $code;
-    # Add the file's mtime for when we check for stat-based reloading
-    $data->{mtime} = (stat $file)[9];
-    $data->{file}  = $file;
-
-    return $data;
-}
-
-###############################################################################
-#
-#   Sub Name:       call
-#
-#   Description:    Encapsulates the invocation of the code block that the
-#                   object is abstracting. Manages parameters, signature
-#                   checking, etc.
-#
-#   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
-#                   $self     in      ref       Object of this class
-#                   $srv      in      ref       An object derived from the
-#                                                 RPC::XML::Server class
-#                   @dafa     in      list      The params for the call itself
-#
-#   Globals:        None.
-#
-#   Environment:    None.
-#
-#   Returns:        Success:    value
-#                   Failure:    dies with RPC::XML::Fault object as message
-#
-###############################################################################
-sub call
-{
-    my ($self, $srv, @data) = @_;
-
-    my (@paramtypes, @params, $signature, $resptype, $response, $name, $noinc);
-
-    $name = $self->name;
-    # Create the param list.
-    # The type for the response will be derived from the matching signature
-    @paramtypes = map { $_->type } @data;
-    @params     = map { $_->value } @data;
-    $signature = join q{ } => @paramtypes;
-    $resptype = $self->match_signature($signature);
-    # Since there must be at least one signature with a return value (even
-    # if the param list is empty), this tells us if the signature matches:
-    if (! $resptype)
-    {
-        return $srv->server_fault(
-            badsignature =>
-            "method $name has no matching signature for the argument list: " .
-            "[$signature]"
-        );
-    }
-
-    # Make sure that the response-type is a valid XML-RPC type
-    if (($resptype ne 'scalar') && (! "RPC::XML::$resptype"->can('new')))
-    {
-        return $srv->server_fault(badsignature =>
-            "Signature [$signature] for method $name has unknown " .
-            "return-type '$resptype'");
-    }
-
-    # Set these in case the server object is part of the param list
-    local $srv->{signature} =          ## no critic (ProhibitLocalVars)
-        [ $resptype, @paramtypes ];
-    local $srv->{method_name} = $name; ## no critic (ProhibitLocalVars)
-    # If the method being called is "system.status", check to see if we should
-    # increment the server call-count.
-    $noinc =
-        (($name eq 'system.status') &&
-            @data &&
-            ($paramtypes[0] eq 'boolean') &&
-            $params[0]) ? 1 : 0;
-    # For RPC::XML::Method (and derivatives), pass the server object
-    if ($self->isa('RPC::XML::Method'))
-    {
-        unshift @params, $srv;
-    }
-
-    # Now take a deep breath and call the method with the arguments
-    if (! eval { $response = $self->{code}->(@params); 1; })
-    {
-        # On failure, propagate user-generated RPC::XML::fault exceptions, or
-        # transform Perl-level error/failure into such an object
-        if ($@)
-        {
-            return (blessed $@ and $@->isa('RPC::XML::fault')) ?
-                $@ : $srv->server_fault(execerror =>
-                                        "Method $name returned error: $@");
-        }
-    }
-
-    if (! $noinc)
-    {
-        $self->{called}++;
-    }
-    # Create a suitable return value
-    if (! ref $response)
-    {
-        if ($resptype eq 'scalar')
-        {
-            # Server code from the RPC::XML::Function class doesn't use
-            # signatures, so if they didn't encode the returned value
-            # themselves they're trusting smart_encode() to get it right.
-            $response = smart_encode($response);
-        }
-        else
-        {
-            # We checked that this was valid earlier, so no need for further
-            # tests here.
-            $response = "RPC::XML::$resptype"->new($response);
-        }
-    }
-
-    return $response;
-}

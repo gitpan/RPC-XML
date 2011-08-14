@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2009 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -40,7 +40,7 @@
 
 package Apache::RPC::Status;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
 use vars qw(%IS_INSTALLED $SERVER_VER $STARTED $PERL_VER $DEFAULT
@@ -56,14 +56,13 @@ use CGI;
 
 # We use the server module to get the class methods for server objects, etc.
 require Apache::RPC::Server;
-require RPC::XML::Method;
+require RPC::XML::Procedure;
 
-#$SERVER_VER = SERVER_VERSION;
 $SERVER_CLASS = 'Apache::RPC::Server';
 $STARTED    = scalar localtime $^T;
 $PERL_VER   = $^V ? sprintf 'v%vd', $^V : $];
 
-our $VERSION = '1.10';
+our $VERSION = '1.13';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 #
@@ -99,7 +98,6 @@ sub new
     my ($class, @args) = @_;
 
     my %self = %proto;
-    $class = ref $class || $class;
 
     return bless \%self, $class;
 }
@@ -257,7 +255,7 @@ sub header
     {
         $title = " - $title";
     }
-    $title = (ref $self || $self) . $title;
+    $title = ref($self) . $title;
 
     $r->send_http_header('text/html');
     $r->print(<<"EOF");
@@ -289,7 +287,7 @@ sub footer
 {
     my ($self, $r) = @_;
 
-    my $name = ref $self || $self;
+    my $name = ref $self;
     my $vers = $self->version;
     my $date = scalar localtime;
 
@@ -454,7 +452,7 @@ sub server_detail
 {
     my ($self, $R, $Q, $flag) = @_;
 
-    my ($srv, $server, @lines, @methods, $meth1, $meth2, $base_url);
+    my ($srv, $server, @lines, @methods, $meth_left, $meth_right, $base_url);
 
     $server = $Q->param('server');
     # Override this before calling make_url:
@@ -501,15 +499,16 @@ sub server_detail
         push @lines, '<tr><td colspan="2"><table width="100%" border="1">';
         while (@methods)
         {
-            ($meth1, $meth2) = splice @methods, 0, 2;
+            ($meth_left, $meth_right) = splice @methods, 0, 2;
             push @lines, '<tr valign="top"><td width="50%">';
-            push @lines, method_summary($Q, $server, $srv->get_method($meth1),
+            push @lines, method_summary($Q, $server,
+                                        $srv->get_method($meth_left),
                                         $base_url);
             push @lines, '</td><td width="50%">';
-            if ($meth2)
+            if ($meth_right)
             {
                 push @lines, method_summary($Q, $server,
-                                            $srv->get_method($meth2),
+                                            $srv->get_method($meth_right),
                                             $base_url);
             }
             else
@@ -587,7 +586,7 @@ sub method_detail
     my ($self, $R, $Q, $flag) = @_;
     # $flag has no relevance in this routine
 
-    my ($server, $srv, $method, $meth, $tmp, @lines);
+    my ($server, $srv, $method, $meth, $version, $help, @lines);
 
     $server = $Q->param('server');
     $method = $Q->param('method');
@@ -612,10 +611,11 @@ sub method_detail
     push @lines, '<div align="center">', $Q->b('Method: '), $Q->tt($method);
     push @lines, $Q->br(), $Q->br();
     push @lines, '<table border="0" width="75%">';
-    if ($tmp = $meth->version)
+    if ($version = $meth->version)
     {
         push @lines, $Q->TR({ -valign => 'top' },
-                            $Q->td($Q->b('Version:')), $Q->td($Q->tt($tmp)));
+                            $Q->td($Q->b('Version:')),
+                            $Q->td($Q->tt($version)));
     }
     push @lines, $Q->TR({ -valign => 'top' },
                         $Q->td({ -width => '30%' }, $Q->b('Hidden from API:')),
@@ -635,10 +635,10 @@ sub method_detail
     push @lines, $Q->TR({ -valign => 'top' },
                         $Q->td($Q->b('Signatures:')),
                         $Q->td($Q->tt(join '<br>' => @{$meth->signature})));
-    if ($tmp = $meth->help)
+    if ($help = $meth->help)
     {
         push @lines, $Q->TR($Q->td({ -colspan => 2 }, $Q->b('Help string:')));
-        push @lines, $Q->TR($Q->td({ -colspan => 2 }, $Q->pre($Q->tt($tmp))));
+        push @lines, $Q->TR($Q->td({ -colspan => 2 }, $Q->pre($Q->tt($help))));
     }
     push @lines, '</table></div>';
 
@@ -873,7 +873,7 @@ better integration with the B<Apache::Status> package. If the C<FLAG>
 parameter is passed and is any true value, then the resulting URL will be
 tailored for use with B<Apache::Status>. The first argument must be either the
 original request object as passed by mod_perl, or a reference to a CGI object
-created from the request (see L<CGI> for more on the CGI class).
+created from the request (see L<CGI|CGI> for more on the CGI class).
 
 =item main_screen(REQUEST, QUERY, INTERNAL)
 
@@ -1021,6 +1021,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -1029,7 +1033,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -1043,7 +1047,8 @@ specification.
 
 =head1 SEE ALSO
 
-L<Apache::Status>, L<Apache::RPC::Server>, L<RPC::XML::Method>
+L<Apache::Status|Apache::Status>, L<Apache::RPC::Server|Apache::RPC::Server>,
+L<RPC::XML::Method|RPC::XML::Method>
 
 =head1 AUTHOR
 

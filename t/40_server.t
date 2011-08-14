@@ -3,14 +3,16 @@
 # Test the RPC::XML::Server class
 
 use strict;
+use warnings;
 use subs qw(start_server find_port);
 use vars qw($srv $res $bucket $child $parser $xml $req $port $UA @API_METHODS
-            $list $meth @keys %seen $dir $vol);
+            $list $meth @keys %seen $dir $vol $oldtable $newtable $value);
 
+use Carp qw(croak);
 use Socket;
 use File::Spec;
 
-use Test::More tests => 66;
+use Test::More tests => 84;
 use LWP::UserAgent;
 use HTTP::Request;
 use Scalar::Util 'blessed';
@@ -24,10 +26,15 @@ require RPC::XML::ParserFactory;
                   system.status);
 
 ($vol, $dir, undef) = File::Spec->splitpath(File::Spec->rel2abs($0));
-$dir = File::Spec->catpath($vol, $dir, '');
+$dir = File::Spec->catpath($vol, $dir, q{});
 require File::Spec->catfile($dir, 'util.pl');
 
-sub failmsg { sprintf("%s at line %d", @_) }
+sub failmsg
+{
+    my ($msg, $line) = @_;
+
+    return sprintf '%s at line %d', $msg, $line;
+}
 
 # The organization of the test suites is such that we assume anything that
 # runs before the current suite is 100%. Thus, no consistency checks on
@@ -37,24 +44,111 @@ sub failmsg { sprintf("%s at line %d", @_) }
 
 # Start with some very basic things, without actually firing up a live server.
 $srv = RPC::XML::Server->new(no_http => 1, no_default => 1);
-
 isa_ok($srv, 'RPC::XML::Server', '$srv<1>');
-# Suppress "used only once" warning
-$_ = $RPC::XML::Server::VERSION;
+
+# This assignment is just to suppress "used only once" warnings
+$value = $RPC::XML::Server::VERSION;
 is($srv->version, $RPC::XML::Server::VERSION,
    'RPC::XML::Server::version method');
 ok(! $srv->started, 'RPC::XML::Server::started method');
-like($srv->product_tokens, qr|/|, 'RPC::XML::Server::product_tokens method');
+like($srv->product_tokens, qr{/}, 'RPC::XML::Server::product_tokens method');
 ok(! $srv->url, 'RPC::XML::Server::url method (empty)');
 ok(! $srv->requests, 'RPC::XML::Server::requests method (0)');
 ok($srv->response->isa('HTTP::Response'),
    'RPC::XML::Server::response method returns HTTP::Response');
+# Some negative tests:
+$meth = $srv->method_from_file('does_not_exist.xpl');
+ok(! ref $meth, 'Bad file did not result in method reference');
+like($meth, qr/Error opening.*does_not_exist/, 'Correct error message');
+
+# Test the functionality of manipulating the fault table. First get the vanilla
+# table from a simple server object. Then create a new server object with both
+# a fault-base offset and some user-defined faults. We use the existing $srv to
+# get the "plain" table.
+$oldtable = $srv->{__fault_table};
+# Now re-assign $srv
+$srv = RPC::XML::Server->new(
+    no_http         => 1,
+    no_default      => 1,
+    fault_code_base => 1000,
+    fault_table     => {
+        myfault1 => [ 2000, 'test' ],
+        myfault2 => 2001,
+    }
+);
+$newtable = $srv->{__fault_table};
+# Compare number of faults, the values of the fault codes, and the presence of
+# the user-defined faults:
+ok((scalar(keys %{$oldtable}) + 2) == (scalar keys %{$newtable}),
+   'Proper number of relative keys');
+$value = 1;
+for my $key (keys %{$oldtable})
+{
+    if ($newtable->{$key}->[0] != ($oldtable->{$key}->[0] + 1000))
+    {
+        $value = 0;
+        last;
+    }
+}
+ok($value, 'Fault codes adjustment yielded correct new codes');
+ok((exists $newtable->{myfault1} && exists $newtable->{myfault2} &&
+    ref($newtable->{myfault1}) eq 'ARRAY' && $newtable->{myfault2} == 2001 &&
+    $newtable->{myfault1}->[0] == 2000),
+   'User-supplied fault elements look OK');
+
 # Done with this one, let it go
 undef $srv;
 
+# Test that the url() method behaves like we expect it for certain ports
+$srv = RPC::XML::Server->new(
+    no_default => 1,
+    no_http    => 1,
+    host       => 'localhost',
+    port       => 80
+);
+SKIP: {
+    if (ref($srv) ne 'RPC::XML::Server')
+    {
+        skip 'Failed to get port-80 server, cannot test', 1;
+    }
+
+    is($srv->url, 'http://localhost', 'Default URL for port-80 server');
+}
+
+$srv = RPC::XML::Server->new(
+    no_default => 1,
+    no_http    => 1,
+    host       => 'localhost',
+    port       => 443
+);
+SKIP: {
+    if (ref($srv) ne 'RPC::XML::Server')
+    {
+        skip 'Failed to get port-443 server, cannot test', 1;
+    }
+
+    is($srv->url, 'https://localhost', 'Default URL for port-443 server');
+}
+
+# Let's test that server creation properly fails if/when HTTP::Daemon fails.
+# First find a port in use, preferably under 1024:
+SKIP: {
+    $port = find_port_in_use();
+    if ($port == -1)
+    {
+        skip 'No in-use port found for negative testing, skipped', 2;
+    }
+
+    $srv = RPC::XML::Server->new(port => $port);
+    is(ref($srv), q{}, 'Bad new return is not an object');
+    like($srv, qr/Unable to create HTTP::Daemon/, 'Proper error message');
+}
+
 # This one will have a HTTP::Daemon server, but still no default methods
-die "No usable port found between 9000 and 10000, skipping"
-    if (($port = find_port) == -1);
+if (($port = find_port) == -1)
+{
+    croak 'No usable port found between 9000 and 11000, skipping';
+}
 $srv = RPC::XML::Server->new(no_default => 1,
                              host => 'localhost', port => $port);
 isa_ok($srv, 'RPC::XML::Server', '$srv<2>');
@@ -83,6 +177,11 @@ $res = $srv->get_method('perl.test.suite.test1');
 isa_ok($res, 'RPC::XML::Method', 'get_method return value');
 $res = $srv->get_method('perl.test.suite.not.added.yet');
 ok(! ref($res), 'get_method for non-existent method');
+# Throw junk at add_method
+$res = $srv->add_method([]);
+like($res, qr/file name, a hash reference or an object/,
+     'add_method() fails on bad data');
+
 # Here goes...
 $parser = RPC::XML::ParserFactory->new;
 $UA = LWP::UserAgent->new;
@@ -258,8 +357,11 @@ SKIP: {
         skip "Response content did not parse, cannot test", 2
             unless (ref $res and $res->isa('RPC::XML::response'));
         ok($res->is_fault, 'RT29351 live req: parsed $res is a fault');
-        like($res->value->value->{faultString}, qr/Stack corruption/,
-             'RT29351 live request: correct faultString');
+        like(
+            $res->value->value->{faultString},
+            qr/Illegal content in param tag/,
+            'RT29351 live request: correct faultString'
+        );
     }
 }
 stop_server($child);
@@ -800,6 +902,175 @@ SKIP: {
     is($res->{total_requests}, 20, 'system.status, final request tally');
 }
 
+# This time we have to stop the server regardless of whether the response was
+# an error. We're going to add some more methods to test some of the error code
+# and other bits in RPC::XML::Procedure.
+stop_server($child);
+$srv->add_method({
+    type      => 'procedure',
+    name      => 'argcount.p',
+    signature => [ 'int' ],
+    code      => sub { return scalar(@_); },
+});
+$srv->add_method({
+    name      => 'argcount.m',
+    signature => [ 'int' ],
+    code      => sub { return scalar(@_); },
+});
+$srv->add_method({
+    type => 'function',
+    name => 'argcount.f',
+    code => sub { return scalar(@_); },
+});
+$srv->add_method({
+    name      => 'die1',
+    signature => [ 'int' ],
+    code      => sub { die "die\n"; },
+});
+$srv->add_method({
+    name      => 'die2',
+    signature => [ 'int' ],
+    code      => sub { die RPC::XML::fault->new(999, 'inner fault'); },
+});
+
+# Start the server again, with the new methods
+$child = start_server($srv);
+
+# First, call the argcount.? routines, to see that we are getting the correct
+# number of args passed in. Up to now, everything running on $srv has been in
+# the RPC::XML::Method class. This will test some of the other code.
+my @returns = ();
+for my $type (qw(p m f))
+{
+    $req->content(RPC::XML::request->new("argcount.$type")->as_string);
+    $bucket = 0;
+    $SIG{ALRM} = sub { $bucket++ };
+    alarm 120;
+    $res = $UA->request($req);
+    alarm 0;
+    if ($bucket)
+    {
+        push @returns, 'timed-out';
+    }
+    else
+    {
+        $res = $parser->parse($res->content);
+        if (ref($res) ne 'RPC::XML::response')
+        {
+            push @returns, 'parse-error';
+        }
+        else
+        {
+            push @returns, $res->value->value;
+        }
+    }
+}
+# Finally, test what we got from those three calls:
+is(join(q{,} => @returns), '0,1,0', 'Arg-count testing of procedure types');
+
+# While we're at it... test that a ::Function can take any args list
+$req->content(RPC::XML::request->new("argcount.f", 1, 1, 1)->as_string);
+$bucket = 0;
+$SIG{ALRM} = sub { $bucket++ };
+alarm 120;
+$res = $UA->request($req);
+alarm 0;
+SKIP: {
+    if ($bucket)
+    {
+        skip 'Second call to argcount.f timed out', 1;
+    }
+    else
+    {
+        $res = $parser->parse($res->content);
+        if (ref($res) ne 'RPC::XML::response')
+        {
+            skip 'Second call to argcount.f failed to parse', 1;
+        }
+        else
+        {
+            is($res->value->value, 3, 'A function takes any argslist');
+        }
+    }
+}
+
+# And test that those that aren't ::Function recognize bad parameter lists
+$req->content(RPC::XML::request->new("argcount.p", 1, 1, 1)->as_string);
+$bucket = 0;
+$SIG{ALRM} = sub { $bucket++ };
+alarm 120;
+$res = $UA->request($req);
+alarm 0;
+SKIP: {
+    if ($bucket)
+    {
+        skip 'Second call to argcount.f timed out', 1;
+    }
+    else
+    {
+        $res = $parser->parse($res->content);
+        if (ref($res) ne 'RPC::XML::response')
+        {
+            skip 'Second call to argcount.f failed to parse', 1;
+        }
+        else
+        {
+            skip "Test did not return fault, cannot test", 2
+                if (! $res->is_fault);
+            is($res->value->code, 201,
+               'Bad params list test: Correct faultCode');
+            like($res->value->string,
+                 qr/no matching signature for the argument list/,
+                 'Bad params list test: Correct faultString');
+        }
+    }
+}
+
+# Test behavior when the called function throws an exception
+my %die_tests = (
+    die1 => {
+        code   => 300,
+        string => "Code execution error: Method die1 returned error: die\n",
+    },
+    die2 => {
+        code   => 999,
+        string => 'inner fault',
+    },
+);
+for my $test (sort keys %die_tests)
+{
+    $req->content(RPC::XML::request->new($test)->as_string);
+    $bucket = 0;
+    $SIG{ALRM} = sub { $bucket++ };
+    alarm 120;
+    $res = $UA->request($req);
+    alarm 0;
+  SKIP: {
+        if ($bucket)
+        {
+            skip "Test '$test' timed out, cannot test results", 2;
+        }
+        else
+        {
+            $res = $parser->parse($res->content);
+            if (ref($res) ne 'RPC::XML::response')
+            {
+                skip "Test '$test' failed to parse, cannot test results", 2;
+            }
+            else
+            {
+                skip "Test '$test' did not return fault, cannot test", 2
+                    if (! $res->is_fault);
+                is($res->value->code, $die_tests{$test}{code},
+                   "Test $test: Correct faultCode");
+                is($res->value->string, $die_tests{$test}{string},
+                   "Test $test: Correct faultString");
+            }
+        }
+    }
+}
+
 # Don't leave any children laying around
 stop_server($child);
+
 exit;

@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2010 by Randy J. Ray, all rights reserved
+# This file copyright (c) 2010-2011 by Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -31,7 +31,7 @@
 
 package RPC::XML::Parser::XMLLibXML;
 
-use 5.006001;
+use 5.008008;
 use strict;
 use warnings;
 use vars qw($VERSION %VALIDTYPES);
@@ -42,7 +42,7 @@ use base 'RPC::XML::Parser';
 use Scalar::Util 'reftype';
 use XML::LibXML;
 
-$VERSION = '1.12';
+$VERSION = '1.20';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 # This is to identify valid types that don't already have special handling
@@ -90,7 +90,27 @@ sub parse
 {
     my ($self, $stream) = @_;
 
-    my $parser = XML::LibXML->new(no_network => 1);
+    my $parser = XML::LibXML->new(
+        no_network      => 1,
+        expand_xinclude => 0,
+        expand_entities => 1,
+        load_ext_dtd    => 0
+    );
+    # I really don't need the full granularity of XML::LibXML::InputCallback
+    # here, but the ext_ent_handler was not working with the version of
+    # libxml2 on Apple's Snow Leopard.
+    my $callbacks = XML::LibXML::InputCallback->new();
+    $callbacks->register_callbacks([
+        sub {
+            my ($uri) = @_;
+
+            return ($uri =~ m{^file:/}) ? 1 : 0;
+        },
+        sub {},
+        undef,
+        undef,
+    ]);
+    $parser->input_callbacks($callbacks);
 
     # RT58323: It's not enough to just test $stream, I have to check
     # defined-ness. A 0 or null-string should yield an error, not a push-parser
@@ -119,8 +139,8 @@ sub parse
             if (! $result)
             {
                 # Certain cases cause $@ to be a XML::LibXML::Error object
-                # instead of a string. So force it to stringify with "".
-                return "$@";
+                # instead of a string. So force it to stringify with qq().
+                return qq($@);
             }
         }
         elsif (reftype($stream) eq 'SCALAR')
@@ -132,8 +152,8 @@ sub parse
             if (! $result)
             {
                 # Certain cases cause $@ to be a XML::LibXML::Error object
-                # instead of a string. So force it to stringify with "".
-                return "$@";
+                # instead of a string. So force it to stringify with qq().
+                return qq($@);
             }
         }
         else
@@ -150,8 +170,8 @@ sub parse
         if (! $result)
         {
             # Certain cases cause $@ to be a XML::LibXML::Error object
-            # instead of a string. So force it to stringify with "".
-            return "$@";
+            # instead of a string. So force it to stringify with qq().
+            return qq($@);
         }
     }
 
@@ -166,7 +186,7 @@ sub parse
 #
 #   Arguments:      NAME      IN/OUT  TYPE      DESCRIPTION
 #                   $self     in      ref       Object of this class
-#                   @data     in      list      One or more chunks of XML
+#                   @chunks   in      list      One or more chunks of XML
 #
 #   Returns:        Success:    $self
 #                   Failure:    dies
@@ -174,9 +194,9 @@ sub parse
 ###############################################################################
 sub parse_more
 {
-    my ($self, @data) = @_;
+    my ($self, @chunks) = @_;
 
-    for (@data)
+    for (@chunks)
     {
         $self->{parser}->push($_);
     }
@@ -234,16 +254,16 @@ sub dom_to_obj
     # and then walk the resulting DOM to make sure that what I get is what I
     # needed.
 
-    my ($element, $data, $retval);
+    my ($element, $nodename, $retval);
     $element = $dom->documentElement();
-    if (($data = $element->nodeName) =~ /^method(Call|Response)$/)
+    if (($nodename = $element->nodeName) =~ /^method(Call|Response)$/)
     {
         $retval = ($1 eq 'Call') ?
             $self->dom_request($element) : $self->dom_response($element);
     }
     else
     {
-        return "Unknown tag: $data";
+        return "Unknown tag: $nodename";
     }
 
     return $retval;
@@ -255,7 +275,9 @@ sub dom_request
     my ($self, $dom) = @_;
 
     my ($method_name, @args);
-    my @nodes = $dom->childNodes;
+    my @nodes = grep { ! ($_->isa('XML::LibXML::Text') &&
+                              ($_->textContent =~ /^\s*$/)) }
+        ($dom->childNodes);
 
     if (@nodes > 2)
     {
@@ -268,7 +290,7 @@ sub dom_request
         $method_name = $nodes[0]->textContent;
         $method_name =~ s/^\s+//;
         $method_name =~ s/\s+$//;
-        if ($method_name !~ m{[\w\.:/]+})
+        if ($method_name !~ m{^[\w.:/]+$})
         {
             return qq{methodName value "$method_name" not a valid name};
         }
@@ -309,7 +331,9 @@ sub dom_response
 
     my $param;
     my $me = __PACKAGE__ . '::dom_response';
-    my @children = $dom->childNodes;
+    my @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                 ($_->textContent =~ /^\s*$/)) }
+        ($dom->childNodes);
     if (1 != @children)
     {
         return "$me: Illegal content within methodResponse: " .
@@ -322,7 +346,9 @@ sub dom_response
         # This is like delegating to dom_params() in the parsing of a request,
         # but it is limited to a single value (which is why it has to be
         # tested here).
-        @children = $node->childNodes;
+        @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                  ($_->textContent =~ /^\s*$/)) }
+            ($node->childNodes);
         if (1 != @children)
         {
             return
@@ -336,7 +362,9 @@ sub dom_response
 
         # We know that $children[0] is the sole <param> tag. Look at its
         # content to see that we have exactly one <value> tag.
-        @children = $children[0]->childNodes;
+        @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                  ($_->textContent =~ /^\s*$/)) }
+            ($children[0]->childNodes);
         if (1 != @children)
         {
             return
@@ -345,7 +373,7 @@ sub dom_response
         elsif ($children[0]->nodeName ne 'value')
         {
             return qq($me: Invalid content within params: Unknown tag ") .
-                $children[0]->nodeName . '", expected "param"';
+                $children[0]->nodeName . '", expected "value"';
         }
 
         $param = $self->dom_value($children[0]);
@@ -358,7 +386,9 @@ sub dom_response
     elsif ($node->nodeName eq 'fault')
     {
         # Make sure that we have a single <value></value> container
-        my @sub_children = $node->childNodes;
+        my @sub_children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                         ($_->textContent =~ /^\s*$/)) }
+            ($node->childNodes);
         if (1 != @sub_children)
         {
             return
@@ -379,7 +409,12 @@ sub dom_response
             # Return if it was an error message
             return $value;
         }
-        $param = RPC::XML::fault->new($value->value);
+        if (! ref($param = RPC::XML::fault->new($value)))
+        {
+            # If it isn't a ref, then there was an error in creating the
+            # fault object from $value
+            return $RPC::XML::ERROR;
+        }
     }
     else
     {
@@ -401,12 +436,19 @@ sub dom_params
     # which contains a single <value> block.
     for my $child ($node->childNodes)
     {
+        if ($child->isa('XML::LibXML::Text') && $child->textContent =~ /^\s*$/)
+        {
+            next;
+        }
+
         if ((my $tag = $child->nodeName) ne 'param')
         {
             return "$me: Unknown tag in params: $tag (expected 'param')";
         }
         # There should be exactly one child, named 'value'
-        my @children = $child->childNodes;
+        my @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                     ($_->textContent =~ /^\s*$/)) }
+            ($child->childNodes);
         if (1 != @children)
         {
             return "$me: Too many child-nodes for param tag";
@@ -431,7 +473,9 @@ sub dom_value ## no critic(ProhibitExcessComplexity)
     my $me = __PACKAGE__ . '::dom_value';
 
     # Make sure we have only one child-node
-    my @children = $node->childNodes;
+    my @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                 ($_->textContent =~ /^\s*$/)) }
+        ($node->childNodes);
     if (1 != @children)
     {
         return "$me: Too many child-nodes for value tag";
@@ -463,25 +507,49 @@ sub dom_value ## no critic(ProhibitExcessComplexity)
     }
     elsif (my $type = $VALIDTYPES{$nodename})
     {
+        $value = $children[0]->textContent();
+        $value =~ s/^\s+//;
+        $value =~ s/\s+$//;
+        # Some minimal data-integrity checking
+        if ($type eq 'int' or $type eq 'i4' or $type eq 'i8')
+        {
+            if ($value !~ /^[-+]?\d+$/)
+            {
+                return "$me: Bad integer data read";
+            }
+        }
+        elsif ($type eq 'double')
+        {
+            if ($value !~
+                # Taken from perldata(1)
+                /^[+-]?(?=\d|[.]\d)\d*(?:[.]\d*)?(?:[Ee](?:[+-]?\d+))?$/x)
+            {
+                return "$me: Bad floating-point data read";
+            }
+        }
         $type = 'RPC::XML::' . $type;
         # The 'encoded' argument is only relevant for base64, ignored by all
         # the others.
-        $value = $type->new($children[0]->textContent(), 'encoded');
+        $value = $type->new($value, 'encoded');
     }
     elsif ($nodename eq 'array')
     {
-        @children = $children[0]->childNodes;
+        @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                  ($_->textContent =~ /^\s*$/)) }
+            ($children[0]->childNodes);
         if ((1 != @children) || ($children[0]->nodeName ne 'data'))
         {
             return "$me: array tag must have just one child element, 'data'";
         }
-        @children = $children[0]->childNodes;
+        @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                  ($_->textContent =~ /^\s*$/)) }
+            ($children[0]->childNodes);
 
         # Make sure every child node is a <value> tag
         if (my @bad = grep { $_->nodeName() ne 'value' } @children)
         {
-            return qq($me: Bad tag within array: got "$bad[0]", expected ) .
-                '"value"';
+            return qq($me: Bad tag within array: got ") . $bad[0]->nodeName .
+                '", expected "value"';
         }
 
         # Take the easy way out and use recursion to fill out an array ref
@@ -505,12 +573,14 @@ sub dom_value ## no critic(ProhibitExcessComplexity)
     }
     elsif ($nodename eq 'struct')
     {
-        @children = $children[0]->childNodes;
+        @children = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                  ($_->textContent =~ /^\s*$/)) }
+            ($children[0]->childNodes);
         # Make sure every child node is a <member> tag
         if (my @bad = grep { $_->nodeName() ne 'member'} @children)
         {
-            return qq($me: Bad tag within struct: got "$bad[0]", expected ) .
-                '"member"';
+            return qq($me: Bad tag within struct: got ") .
+                $bad[0]->nodeName . '", expected "member"';
         }
 
         # This is a little more work than <array>, as each <member> must have
@@ -518,7 +588,9 @@ sub dom_value ## no critic(ProhibitExcessComplexity)
         $value = {};
         for my $member (@children)
         {
-            my @mchildren = $member->childNodes;
+            my @mchildren = grep { ! ($_->isa('XML::LibXML::Text') &&
+                                          ($_->textContent =~ /^\s*$/)) }
+                ($member->childNodes);
 
             if (2 != @mchildren)
             {
@@ -569,18 +641,22 @@ sub dom_base64
 
     if ($self->{base64_to_fh})
     {
-        require Symbol;
         require File::Spec;
         require File::Temp;
-        my ($fh, $tmpdir) = (Symbol::gensym(), File::Spec->tmpdir);
+        my $fh;
+        my $tmpdir = File::Spec->tmpdir;
 
         if ($self->{base64_temp_dir})
         {
             $tmpdir = $self->{base64_temp_dir};
         }
-        if  (! ($fh = File::Temp->new(UNLINK => 1, DIR => $tmpdir)))
+        # Whee! Turns out File::Temp->new() croaks on error, rather than just
+        # returning undef and setting $! the way you'd expect a failed attempt
+        # at opening a file to do...
+        $fh = eval { File::Temp->new(UNLINK => 1, DIR => $tmpdir) };
+        if  (! $fh)
         {
-            return "$me: Error opening temp file for base64: $!";
+            return "$me: Error opening temp file for base64: $@";
         }
         print {$fh} $dom->textContent;
 
@@ -614,13 +690,13 @@ RPC::XML::Parser::XMLLibXML - A container class for XML::LibXML
 =head1 DESCRIPTION
 
 This class implements the interface defined in the B<RPC::XML::Parser>
-factory-class (see L<RPC::XML::Parser>) using the B<XML::LibXML> module
-to handle the actual manipulation of XML.
+factory-class (see L<RPC::XML::Parser|RPC::XML::Parser>) using the
+B<XML::LibXML> module to handle the actual manipulation of XML.
 
 =head1 SUBROUTINES/METHODS
 
 This module implements the public-facing methods as described in
-L<RPC::XML::Parser>:
+L<RPC::XML::Parser|RPC::XML::Parser>:
 
 =over 4
 
@@ -649,16 +725,23 @@ push-parser, an exception is thrown.
 (Only callable on a push-parser instance) Finishes the parsing process and
 returns either a message object (one of B<RPC::XML::request> or
 B<RPC::XML::response>) or an error (if the document was incomplete, not
-wel-formed, or not valid). If this method is called on a parser instance that
+well-formed, or not valid). If this method is called on a parser instance that
 is not a push-parser, an exception is thrown.
 
 =back
 
 =head1 DIAGNOSTICS
 
-All methods return some type of reference on success, or an error string on
-failure. Non-reference return values should always be interpreted as errors,
-except in the case of C<simple_request>.
+All methods return some type of reference on success. The B<new> and B<parse>
+methods return an error string on failure. The B<parse_more> and B<parse_done>
+methods may throw exceptions, if the underlying B<XML::LibXML> parser
+encounters a fatal error.
+
+=head1 EXTERNAL ENTITIES
+
+As of version 1.15 of this module (version 0.75 of the B<RPC::XML> suite),
+external entities whose URI is a C<file:/> scheme (local file) are explicitly
+ignored. This is for security purposes.
 
 =head1 BUGS
 
@@ -688,6 +771,10 @@ L<http://cpanratings.perl.org/d/RPC-XML>
 
 L<http://search.cpan.org/dist/RPC-XML>
 
+=item * MetaCPAN
+
+L<https://metacpan.org/release/RPC-XML>
+
 =item * Source code on GitHub
 
 L<http://github.com/rjray/rpc-xml>
@@ -696,7 +783,7 @@ L<http://github.com/rjray/rpc-xml>
 
 =head1 LICENSE AND COPYRIGHT
 
-This file and the code within are copyright (c) 2010 by Randy J. Ray.
+This file and the code within are copyright (c) 2011 by Randy J. Ray.
 
 Copying and distribution are permitted under the terms of the Artistic
 License 2.0 (L<http://www.opensource.org/licenses/artistic-license-2.0.php>) or
@@ -710,7 +797,8 @@ specification.
 
 =head1 SEE ALSO
 
-L<RPC::XML>, L<RPC::XML::Parser>, L<XML::LibXML>
+L<RPC::XML|RPC::XML>, L<RPC::XML::Parser|RPC::XML::Parser>,
+L<XML::LibXML|XML::LibXML>
 
 =head1 AUTHOR
 
