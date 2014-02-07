@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2014 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -55,6 +55,7 @@
 #                   RPC::XML
 #                   RPC::XML::ParserFactory
 #                   RPC::XML::Procedure
+#                   Compress::Raw::Zlib is used if available
 #
 #   Global Consts:  $VERSION
 #                   $INSTALL_DIR
@@ -74,11 +75,12 @@ use Carp qw(carp croak);
 use File::Spec;
 use File::Temp;
 use IO::Handle;
+use Module::Load;
+use Scalar::Util 'blessed';
 
 use HTTP::Status;
 use HTTP::Response;
 use URI;
-use Scalar::Util 'blessed';
 
 use RPC::XML;
 use RPC::XML::ParserFactory;
@@ -97,10 +99,8 @@ BEGIN
     $IO_SOCKET_SSL_HACK_NEEDED = 1;
 
     # Check for compression support
-    if (! eval { require Compress::Zlib; $COMPRESSION_AVAILABLE = 'deflate'; })
-    {
-        $COMPRESSION_AVAILABLE = q{};
-    }
+    $COMPRESSION_AVAILABLE =
+        (eval { load Compress::Zlib; 1; }) ? 'deflate' : q{};
 
     # Set up the initial table of fault-types and their codes/messages
     %FAULT_TABLE = (
@@ -118,7 +118,7 @@ BEGIN
     );
 }
 
-$VERSION = '1.70';
+$VERSION = '1.73';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 ###############################################################################
@@ -874,6 +874,7 @@ sub process_request ## no critic (ProhibitExcessComplexity)
             # Get a XML::Parser::ExpatNB object
             $parser = $self->parser->parse();
 
+            $do_compress = 0; # in case it was set for a previous response
             if (($req->content_encoding || q{}) =~ $self->compress_re)
             {
                 if (! $self->compress)
@@ -1114,7 +1115,7 @@ sub process_request ## no critic (ProhibitExcessComplexity)
             else
             {
                 # Treat the content strictly in-memory
-                utf8::downgrade($buf = $respxml->as_string);
+                utf8::encode($buf = $respxml->as_string);
                 if ($do_compress)
                 {
                     $buf = Compress::Zlib::compress($buf);

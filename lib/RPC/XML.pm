@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# This file copyright (c) 2001-2011 Randy J. Ray, all rights reserved
+# This file copyright (c) 2001-2014 Randy J. Ray, all rights reserved
 #
 # Copying and distribution are permitted under the terms of the Artistic
 # License 2.0 (http://www.opensource.org/licenses/artistic-license-2.0.php) or
@@ -15,6 +15,7 @@
 #                   examine them individually.
 #
 #   Libraries:      RPC::XML::base64 uses MIME::Base64
+#                   DateTime::Format::ISO8601 is used if available
 #
 #   Global Consts:  $VERSION
 #
@@ -31,10 +32,14 @@ use vars qw(@EXPORT_OK %EXPORT_TAGS $VERSION $ERROR
 use subs qw(time2iso8601 smart_encode);
 use base 'Exporter';
 
+use Module::Load;
 use Scalar::Util qw(blessed reftype);
 
+# The RPC_* convenience-encoders need prototypes:
 ## no critic (ProhibitSubroutinePrototypes)
+# This module declares all the data-type packages:
 ## no critic (ProhibitMultiplePackages)
+# The data-type package names trigger this one:
 ## no critic (Capitalization)
 
 BEGIN
@@ -50,8 +55,7 @@ BEGIN
 
     # Determine if the DateTime::Format::ISO8601 module is available for
     # RPC::XML::datetime_iso8601 to use:
-    my $retval = eval 'use DateTime::Format::ISO8601; 1;';
-    $DATETIME_ISO8601_AVAILABLE = $retval ? 1 : 0;
+    $DATETIME_ISO8601_AVAILABLE = eval { load DateTime::Format::ISO8601; 1; };
 }
 
 @EXPORT_OK = qw(time2iso8601 smart_encode
@@ -63,7 +67,7 @@ BEGIN
                               RPC_NIL) ],
                 all   => [ @EXPORT_OK ]);
 
-$VERSION = '1.56';
+$VERSION = '1.60';
 $VERSION = eval $VERSION; ## no critic (ProhibitStringyEval)
 
 # Global error string
@@ -77,6 +81,7 @@ $ERROR = q{};
     q{&} => '&amp;',
     q{"} => '&quot;',
     q{'} => '&apos;',
+    "\x0d" => '&#xd;'
 );
 $XMLRE = join q{} => keys %XMLMAP; $XMLRE = qr/([$XMLRE])/;
 
@@ -258,6 +263,7 @@ sub time2iso8601
                     $type = reftype $_;
                     die "Un-convertable reference: $type, cannot use\n";
                 }
+                $seenrefs->{$_}--;
             }
             # You have to check ints first, because they match the
             # next pattern (for doubles) too
@@ -399,7 +405,7 @@ sub as_string
         substr $class, 0, 8, 'dateTime';
     }
 
-    return "<$class>$$self</$class>";
+    return "<$class>${$self}</$class>";
 }
 
 # Serialization for simple types is just a matter of sending as_string over
@@ -407,7 +413,7 @@ sub serialize
 {
     my ($self, $fh) = @_;
 
-    utf8::downgrade(my $str = $self->as_string);
+    utf8::encode(my $str = $self->as_string);
     print {$fh} $str;
 
     return;
@@ -419,7 +425,7 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
 {
     my $self = shift;
 
-    utf8::downgrade(my $str = $self->as_string);
+    utf8::encode(my $str = $self->as_string);
 
     return length $str;
 }
@@ -857,7 +863,7 @@ sub serialize
     for (keys %{$self})
     {
         ($key = $_) =~ s/$RPC::XML::XMLRE/$RPC::XML::XMLMAP{$1}/ge;
-        utf8::downgrade($key);
+        utf8::encode($key);
         print {$fh} "<member><name>$key</name><value>";
         $self->{$_}->serialize($fh);
         print {$fh} '</value></member>';
@@ -877,7 +883,7 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
     {
         $len += 45; # For all the constant XML presence
         $len += $self->{$key}->length;
-        utf8::downgrade($key);
+        utf8::encode($key);
         $len += length $key;
     }
 
@@ -1094,7 +1100,7 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
             my $cnt = 0;
 
             $self->{fh_pos} = tell $self->{value_fh};
-            seek$self->{value_fh}, 0, 0;
+            seek $self->{value_fh}, 0, 0;
             while ($cnt = read $self->{value_fh}, $buf, 60*57)
             {
                 $len += length(MIME::Base64::encode_base64($buf, q{}));
@@ -1408,7 +1414,7 @@ sub as_string
 sub serialize
 {
     my ($self, $fh) = @_;
-    utf8::downgrade(my $name = $self->{name});
+    utf8::encode(my $name = $self->{name});
 
     print {$fh} qq(<?xml version="1.0" encoding="$RPC::XML::ENCODING"?>);
 
@@ -1430,7 +1436,7 @@ sub length ## no critic (ProhibitBuiltinHomonyms)
     my $self = shift;
 
     my $len = 100 + length $RPC::XML::ENCODING; # All the constant XML present
-    utf8::downgrade(my $name = $self->{name});
+    utf8::encode(my $name = $self->{name});
     $len += length $name;
 
     for (@{$self->{args}})

@@ -9,7 +9,6 @@
 use ExtUtils::MakeMaker;
 use File::Spec;
 use File::Find;
-use Cwd 'cwd';
 
 my ($vol, $dir, undef) = File::Spec->splitpath(File::Spec->rel2abs($0));
 $dir                   = File::Spec->catpath($vol, $dir, '');
@@ -66,7 +65,7 @@ find(sub {
 
 WriteMakefile(
     NAME      => 'RPC::XML',
-    VERSION   => '0.77',
+    VERSION   => '0.78',
     AUTHOR    => 'Randy J. Ray',
     ABSTRACT  => 'Data, client and server classes for XML-RPC',
     EXE_FILES => \@scripts,
@@ -78,6 +77,7 @@ WriteMakefile(
         'Test::More'   => 0.94,
         'LWP'          => 5.834,
         'XML::Parser'  => 2.31,
+        'Module::Load' => 0.24,
     },
     dist      => { COMPRESS => 'gzip -9f' },
     clean     => { FILES => $CLEAN },
@@ -88,6 +88,7 @@ WriteMakefile(
             'XML::LibXML'               => '1.85',
             'DateTime'                  => '0.70',
             'DateTime::Format::ISO8601' => '0.07',
+            'Compress::Raw::Zlib'       => '2.063',
         },
         resources => {
             homepage   => 'http://search.cpan.org/dist/RPC-XML',
